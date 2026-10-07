@@ -1,0 +1,1037 @@
+.tutor-page {
+    --tutor-ink: #202b3c;
+    --tutor-muted: #778194;
+    --tutor-border: #e7eaf0;
+    --tutor-blue: #4c63d2;
+    display: flex;
+    height: calc(100vh - 136px);
+    min-height: 560px;
+    margin: -32px;
+    overflow: hidden;
+    background: #fff;
+    color: var(--tutor-ink);
+}
+
+.tutor-history {
+    width: 268px;
+    flex: 0 0 268px;
+    display: flex;
+    flex-direction: column;
+    padding: 20px 14px 14px;
+    background: #f8f9fc;
+    border-right: 1px solid var(--tutor-border);
+}
+
+.tutor-history-top {
+    min-height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 6px;
+    margin-bottom: 19px;
+}
+
+.tutor-history-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.tutor-brand-mark,
+.tutor-welcome-icon {
+    display: grid;
+    place-items: center;
+    color: #fff;
+    background: linear-gradient(145deg, #7485ed, #4a60d0);
+    box-shadow: 0 5px 13px #596fd12c;
+}
+
+.tutor-brand-mark {
+    width: 36px;
+    height: 36px;
+    border-radius: 11px;
+}
+
+.tutor-history-brand strong,
+.tutor-history-brand span {
+    display: block;
+}
+
+.tutor-history-brand strong {
+    color: #283348;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.tutor-history-brand span {
+    margin-top: 3px;
+    color: #9199a8;
+    font-size: 11px;
+}
+
+.tutor-new-chat {
+    width: 100%;
+    min-height: 42px;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 0 12px;
+    border: 1px solid #e0e4ec;
+    border-radius: 9px;
+    color: #38445b;
+    background: #fff;
+    text-align: left;
+    font-size: 12px;
+    font-weight: 650;
+    transition: border-color .18s ease, background .18s ease, transform .18s ease;
+}
+
+.tutor-new-chat:hover {
+    border-color: #c4ccef;
+    background: #fdfdff;
+    transform: translateY(-1px);
+}
+
+.tutor-new-chat > svg {
+    color: var(--tutor-blue);
+}
+
+.tutor-new-shortcut {
+    margin-left: auto;
+    padding: 3px 5px;
+    border: 1px solid #eceef3;
+    border-radius: 5px;
+    color: #9aa2b0;
+    font-size: 9px;
+    font-weight: 500;
+}
+
+.tutor-history-list {
+    flex: 1;
+    overflow-y: auto;
+    padding-top: 23px;
+}
+
+.tutor-history-group {
+    margin-bottom: 21px;
+}
+
+.tutor-history-group > p {
+    margin: 0 8px 8px;
+    color: #9299a7;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .055em;
+    text-transform: uppercase;
+}
+
+.tutor-history-item {
+    min-width: 0;
+    flex: 1;
+    min-height: 38px;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 0 9px;
+    border: 0;
+    border-radius: 7px;
+    color: #586478;
+    background: transparent;
+    text-align: left;
+    font-size: 11px;
+    transition: background .15s ease, color .15s ease;
+}
+
+.tutor-history-entry {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    margin-top: 2px;
+}
+
+.tutor-history-item > svg {
+    flex: 0 0 auto;
+    color: #8c96a8;
+}
+
+.tutor-history-item > span:nth-child(2) {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tutor-history-item:hover,
+.tutor-history-item.active {
+    color: #34468f;
+    background: #ebefff;
+}
+
+.tutor-history-item.active > svg {
+    color: #5c70d5;
+}
+
+.tutor-delete-chat {
+    display: grid;
+    place-items: center;
+    width: 25px;
+    height: 25px;
+    margin-left: auto;
+    padding: 0;
+    border: 0;
+    border-radius: 6px;
+    color: #929bad;
+    background: transparent;
+    opacity: 0;
+    flex: 0 0 auto;
+}
+
+.tutor-history-entry:hover .tutor-delete-chat,
+.tutor-history-entry:focus-within .tutor-delete-chat {
+    opacity: 1;
+}
+
+.tutor-delete-chat:hover {
+    color: #c44747;
+    background: #fff;
+}
+
+.tutor-history-status,
+.tutor-history-empty {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 8px;
+    color: #9098a7;
+    font-size: 11px;
+    line-height: 1.6;
+}
+
+.tutor-history-footer {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 15px 6px 2px;
+    border-top: 1px solid #e9ebf1;
+    color: #8c95a4;
+    font-size: 10px;
+}
+
+.tutor-history-footer svg {
+    flex: 0 0 auto;
+    color: #7885c8;
+}
+
+.tutor-chat {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    background:
+        radial-gradient(ellipse at 50% 8%, #fafaff 0, #fff 44%);
+}
+
+.tutor-chat-header {
+    height: 66px;
+    flex: 0 0 66px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0 30px;
+    border-bottom: 1px solid #eff0f4;
+    background: #ffffffdd;
+}
+
+.tutor-chat-header h1 {
+    margin: 0;
+    color: #283348;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.tutor-chat-header p {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 4px 0 0;
+    color: #8a93a2;
+    font-size: 10px;
+}
+
+.tutor-online-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #45bd8a;
+    box-shadow: 0 0 0 3px #45bd8a1c;
+}
+
+.tutor-header-badge {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+    padding: 6px 9px;
+    border: 1px solid #eceeff;
+    border-radius: 20px;
+    color: #6675c4;
+    background: #f8f9ff;
+    font-size: 10px;
+    font-weight: 650;
+}
+
+.tutor-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 30px 24px;
+    scroll-behavior: smooth;
+}
+
+.tutor-messages.is-empty {
+    display: grid;
+    place-items: center;
+}
+
+.tutor-welcome {
+    width: min(100%, 565px);
+    padding: 24px 12px 32px;
+    text-align: center;
+    animation: tutor-appear .35s ease both;
+}
+
+.tutor-welcome-icon {
+    width: 54px;
+    height: 54px;
+    margin: 0 auto 22px;
+    border-radius: 17px;
+}
+
+.tutor-welcome-eyebrow {
+    margin-bottom: 10px;
+    color: #7581cb;
+    font-size: 9px;
+    font-weight: 750;
+    letter-spacing: .14em;
+}
+
+.tutor-welcome h2 {
+    margin: 0;
+    color: #273349;
+    font-size: clamp(22px, 3vw, 29px);
+    font-weight: 700;
+    letter-spacing: -.045em;
+}
+
+.tutor-welcome-copy {
+    max-width: 430px;
+    margin: 12px auto 25px;
+    color: #7e8899;
+    font-size: 12px;
+    line-height: 1.8;
+}
+
+.tutor-suggestions {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 9px;
+    text-align: left;
+}
+
+.tutor-suggestions button {
+    min-height: 77px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 11px;
+    padding: 12px;
+    border: 1px solid #eaecf3;
+    border-radius: 10px;
+    color: #5c687b;
+    background: #fff;
+    box-shadow: 0 3px 12px #29395c08;
+    text-align: left;
+    font-size: 10px;
+    line-height: 1.5;
+    transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+}
+
+.tutor-suggestions button:hover:not(:disabled) {
+    border-color: #c9d0f4;
+    box-shadow: 0 7px 17px #5266ce14;
+    transform: translateY(-2px);
+}
+
+.tutor-suggestions button:disabled {
+    cursor: default;
+}
+
+.tutor-suggestions svg {
+    color: #7482d5;
+    flex: 0 0 auto;
+}
+
+.tutor-message-list {
+    width: min(100%, 790px);
+    display: flex;
+    flex-direction: column;
+    gap: 27px;
+    margin: 0 auto;
+}
+
+.tutor-message {
+    display: flex;
+    align-items: flex-start;
+    gap: 13px;
+    animation: tutor-appear .22s ease both;
+}
+
+.tutor-message.from-user {
+    padding: 14px 15px;
+    border: 1px solid #eceef3;
+    border-radius: 12px;
+    background: #fafbfe;
+}
+
+.tutor-message.from-assistant {
+    padding: 4px 3px;
+}
+
+.tutor-message-avatar {
+    width: 30px;
+    height: 30px;
+    display: grid;
+    place-items: center;
+    flex: 0 0 30px;
+    border-radius: 10px;
+    color: #6677d2;
+    background: #edf0ff;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.from-user .tutor-message-avatar {
+    color: #5c6f9c;
+    background: #e8eef7;
+}
+
+.tutor-message-body {
+    min-width: 0;
+    flex: 1;
+}
+
+.tutor-message-label {
+    margin: 1px 0 7px;
+    color: #354157;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.tutor-message-content {
+    color: #4f5b6e;
+    font-size: 12px;
+    line-height: 1.8;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+}
+
+.tutor-thinking {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    height: 24px;
+}
+
+.tutor-thinking span {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #8794d6;
+    animation: tutor-bounce 1s ease-in-out infinite;
+}
+
+.tutor-thinking span:nth-child(2) {
+    animation-delay: .13s;
+}
+
+.tutor-thinking span:nth-child(3) {
+    animation-delay: .26s;
+}
+
+.tutor-loading-messages {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 9px;
+    height: 100%;
+    color: #818b9d;
+    font-size: 12px;
+}
+
+.tutor-composer-area {
+    width: min(100% - 48px, 790px);
+    margin: 0 auto;
+    padding: 0 0 13px;
+}
+
+.tutor-composer {
+    padding: 12px 13px 9px 16px;
+    border: 1px solid #e3e6ed;
+    border-radius: 14px;
+    background: #fff;
+    box-shadow: 0 6px 25px #29395c0b, 0 1px 3px #29395c07;
+    transition: border-color .18s ease, box-shadow .18s ease;
+}
+
+.tutor-composer:focus-within {
+    border-color: #c4ccef;
+    box-shadow: 0 6px 25px #29395c0b, 0 0 0 3px #6376d411;
+}
+
+.tutor-composer textarea {
+    width: 100%;
+    min-height: 37px;
+    max-height: 170px;
+    resize: vertical;
+    padding: 3px 0;
+    border: 0;
+    outline: 0;
+    color: #354157;
+    background: transparent;
+    font-size: 12px;
+    line-height: 1.7;
+}
+
+.tutor-composer textarea::placeholder {
+    color: #a1a8b4;
+}
+
+.tutor-composer textarea:disabled {
+    opacity: .7;
+}
+
+.tutor-composer-bottom,
+.tutor-composer-bottom > div {
+    display: flex;
+    align-items: center;
+}
+
+.tutor-composer-bottom {
+    justify-content: space-between;
+    min-height: 31px;
+}
+
+.tutor-composer-bottom > span {
+    color: #a0a7b3;
+    font-size: 9px;
+}
+
+.tutor-composer-bottom > div {
+    gap: 9px;
+}
+
+.tutor-character-count {
+    color: #9aa2b0;
+    font-size: 9px;
+}
+
+.tutor-send-button {
+    width: 31px;
+    height: 31px;
+    display: grid;
+    place-items: center;
+    border: 0;
+    border-radius: 9px;
+    color: #fff;
+    background: #5c6ed4;
+    box-shadow: 0 3px 8px #5065cd35;
+    transition: background .16s ease, transform .16s ease, opacity .16s ease;
+}
+
+.tutor-send-button:hover:not(:disabled) {
+    background: #485dc7;
+    transform: translateY(-1px);
+}
+
+.tutor-send-button:disabled {
+    cursor: not-allowed;
+    opacity: .42;
+    box-shadow: none;
+}
+
+.tutor-disclaimer {
+    margin: 9px 0 0;
+    color: #a0a6b1;
+    text-align: center;
+    font-size: 9px;
+}
+
+.tutor-error {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 9px;
+    padding: 10px 12px;
+    border: 1px solid #f3d4d0;
+    border-radius: 9px;
+    color: #a7433d;
+    background: #fff8f7;
+    font-size: 11px;
+    line-height: 1.5;
+}
+
+.tutor-error button,
+.tutor-icon-button {
+    display: grid;
+    place-items: center;
+    border: 0;
+    color: #768195;
+    background: transparent;
+}
+
+.tutor-error button {
+    flex: 0 0 auto;
+    padding: 2px;
+}
+
+.tutor-icon-button {
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+}
+
+.tutor-icon-button:hover,
+.tutor-error button:hover {
+    color: #4456b6;
+    background: #eff1ff;
+}
+
+.tutor-close-history,
+.tutor-mobile-history,
+.tutor-history-backdrop {
+    display: none;
+}
+
+.tutor-spin {
+    animation: tutor-spin 1s linear infinite;
+}
+
+@keyframes tutor-spin {
+    to { transform: rotate(360deg); }
+}
+
+@keyframes tutor-bounce {
+    0%, 60%, 100% { transform: translateY(0); opacity: .55; }
+    30% { transform: translateY(-4px); opacity: 1; }
+}
+
+@keyframes tutor-appear {
+    from { opacity: 0; transform: translateY(5px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 900px) {
+    .tutor-history {
+        width: 235px;
+        flex-basis: 235px;
+    }
+
+    .tutor-chat-header {
+        padding-right: 20px;
+        padding-left: 20px;
+    }
+
+    .tutor-messages {
+        padding-right: 20px;
+        padding-left: 20px;
+    }
+}
+
+@media (max-width: 680px) {
+    .tutor-page {
+        position: relative;
+        height: calc(100dvh - 72px);
+        min-height: 440px;
+        margin: -18px;
+    }
+
+    .tutor-history {
+        position: absolute;
+        z-index: 3;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        width: min(300px, calc(100vw - 55px));
+        transform: translateX(-105%);
+        transition: transform .22s ease;
+        box-shadow: 10px 0 35px #1d2a481c;
+    }
+
+    .tutor-history.is-open {
+        transform: translateX(0);
+    }
+
+    .tutor-close-history,
+    .tutor-mobile-history {
+        display: grid;
+    }
+
+    .tutor-history-backdrop {
+        position: absolute;
+        z-index: 2;
+        inset: 0;
+        display: block;
+        border: 0;
+        background: #17203359;
+    }
+
+    .tutor-chat-header {
+        height: 58px;
+        flex-basis: 58px;
+        gap: 7px;
+        padding: 0 13px;
+    }
+
+    .tutor-mobile-history {
+        flex: 0 0 34px;
+    }
+
+    .tutor-messages {
+        padding: 20px 14px;
+    }
+
+    .tutor-welcome {
+        padding: 10px 0 20px;
+    }
+
+    .tutor-welcome-icon {
+        width: 47px;
+        height: 47px;
+        margin-bottom: 17px;
+        border-radius: 15px;
+    }
+
+    .tutor-welcome h2 {
+        font-size: 23px;
+    }
+
+    .tutor-welcome-copy {
+        max-width: 330px;
+        margin-bottom: 19px;
+        font-size: 11px;
+    }
+
+    .tutor-suggestions {
+        grid-template-columns: 1fr;
+        gap: 7px;
+    }
+
+    .tutor-suggestions button {
+        min-height: 43px;
+        flex-direction: row;
+        align-items: center;
+        gap: 9px;
+        padding: 9px 11px;
+    }
+
+    .tutor-composer-area {
+        width: calc(100% - 24px);
+        padding-bottom: 9px;
+    }
+
+    .tutor-composer {
+        padding: 10px 10px 7px 12px;
+        border-radius: 12px;
+    }
+
+    .tutor-disclaimer {
+        font-size: 8px;
+    }
+
+    .tutor-message {
+        gap: 9px;
+    }
+
+    .tutor-message.from-user {
+        padding: 12px 10px;
+    }
+
+    .tutor-message-content {
+        font-size: 11px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .tutor-page *,
+    .tutor-page *::before,
+    .tutor-page *::after {
+        scroll-behavior: auto !important;
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .01ms !important;
+    }
+}
+
+/* Keep the tutor comfortable to read at common laptop resolutions. */
+.tutor-page {
+    height: calc(100dvh - 72px);
+    min-height: 0;
+    background: #fff;
+}
+
+.tutor-history {
+    width: 292px;
+    flex-basis: 292px;
+    padding: 24px 18px 16px;
+    background: #f7f8fb;
+}
+
+.tutor-history-top {
+    margin-bottom: 22px;
+}
+
+.tutor-history-brand strong {
+    font-size: 15px;
+}
+
+.tutor-history-brand span {
+    font-size: 13px;
+}
+
+.tutor-new-chat {
+    min-height: 48px;
+    font-size: 14px;
+}
+
+.tutor-history-list {
+    padding-top: 25px;
+}
+
+.tutor-history-group > p {
+    font-size: 11px;
+}
+
+.tutor-history-item {
+    min-height: 43px;
+    font-size: 13px;
+}
+
+.tutor-history-status,
+.tutor-history-empty {
+    font-size: 13px;
+}
+
+.tutor-history-footer {
+    font-size: 11px;
+}
+
+.tutor-chat-header {
+    height: 76px;
+    flex-basis: 76px;
+}
+
+.tutor-chat-header h1 {
+    font-size: 19px;
+}
+
+.tutor-chat-header p {
+    font-size: 13px;
+}
+
+.tutor-header-badge {
+    padding: 8px 12px;
+    font-size: 12px;
+}
+
+.tutor-messages {
+    padding: 36px 32px;
+}
+
+.tutor-welcome {
+    width: min(100%, 700px);
+}
+
+.tutor-welcome-icon {
+    width: 64px;
+    height: 64px;
+    margin-bottom: 24px;
+    border-radius: 19px;
+}
+
+.tutor-welcome-eyebrow {
+    font-size: 11px;
+}
+
+.tutor-welcome h2 {
+    font-size: clamp(30px, 3.3vw, 40px);
+    letter-spacing: -.035em;
+}
+
+.tutor-welcome-copy {
+    max-width: 520px;
+    margin: 15px auto 30px;
+    font-size: 16px;
+}
+
+.tutor-suggestions {
+    gap: 12px;
+}
+
+.tutor-suggestions button {
+    min-height: 100px;
+    gap: 14px;
+    padding: 16px;
+    font-size: 14px;
+}
+
+.tutor-suggestions svg {
+    width: 19px;
+    height: 19px;
+}
+
+.tutor-message-list {
+    width: min(100%, 900px);
+    gap: 30px;
+}
+
+.tutor-message {
+    gap: 16px;
+}
+
+.tutor-message.from-user {
+    padding: 18px;
+    border-radius: 14px;
+}
+
+.tutor-message-avatar {
+    width: 38px;
+    height: 38px;
+    flex-basis: 38px;
+    border-radius: 12px;
+    font-size: 14px;
+}
+
+.tutor-message-label {
+    margin: 3px 0 9px;
+    font-size: 14px;
+}
+
+.tutor-message-content {
+    font-size: 16px;
+    line-height: 1.8;
+}
+
+.tutor-composer-area {
+    width: min(100% - 64px, 900px);
+    padding-bottom: 18px;
+}
+
+.tutor-composer {
+    padding: 15px 16px 11px 19px;
+    border-radius: 16px;
+}
+
+.tutor-composer textarea {
+    min-height: 48px;
+    font-size: 16px;
+}
+
+.tutor-composer-bottom {
+    min-height: 38px;
+}
+
+.tutor-composer-bottom > span {
+    font-size: 11px;
+}
+
+.tutor-send-button {
+    width: 40px;
+    height: 40px;
+    border-radius: 12px;
+}
+
+.tutor-disclaimer {
+    margin-top: 11px;
+    font-size: 11px;
+}
+
+.tutor-error {
+    padding: 13px 15px;
+    font-size: 14px;
+}
+
+@media (max-width: 900px) {
+    .tutor-history {
+        width: 250px;
+        flex-basis: 250px;
+    }
+
+    .tutor-suggestions button {
+        padding: 12px;
+        font-size: 12px;
+    }
+}
+
+@media (max-width: 680px) {
+    .tutor-page {
+        height: calc(100dvh - 72px);
+        min-height: 0;
+    }
+
+    .tutor-history {
+        width: min(310px, calc(100vw - 55px));
+        flex-basis: auto;
+    }
+
+    .tutor-chat-header {
+        height: 66px;
+        flex-basis: 66px;
+    }
+
+    .tutor-chat-header h1 {
+        font-size: 17px;
+    }
+
+    .tutor-chat-header p {
+        font-size: 11px;
+    }
+
+    .tutor-messages {
+        padding: 20px 16px;
+    }
+
+    .tutor-welcome h2 {
+        font-size: 29px;
+    }
+
+    .tutor-welcome-copy {
+        font-size: 14px;
+    }
+
+    .tutor-suggestions button {
+        min-height: 52px;
+        font-size: 13px;
+    }
+
+    .tutor-message-label {
+        font-size: 13px;
+    }
+
+    .tutor-message-content {
+        font-size: 15px;
+    }
+
+    .tutor-composer-area {
+        width: calc(100% - 24px);
+        padding-bottom: 10px;
+    }
+
+    .tutor-composer textarea {
+        min-height: 42px;
+        font-size: 15px;
+    }
+
+    .tutor-disclaimer {
+        font-size: 9px;
+    }
+}
