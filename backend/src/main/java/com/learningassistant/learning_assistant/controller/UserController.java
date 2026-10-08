@@ -1,6 +1,10 @@
 package com.learningassistant.learning_assistant.controller;
 
 import com.learningassistant.learning_assistant.entity.User;
+import com.learningassistant.learning_assistant.dto.PasswordChangeRequest;
+import com.learningassistant.learning_assistant.dto.ProfileUpdateRequest;
+import com.learningassistant.learning_assistant.dto.ProfileUpdateResponse;
+import com.learningassistant.learning_assistant.dto.UserProfileResponse;
 import com.learningassistant.learning_assistant.service.UserService;
 
 import org.springframework.http.HttpStatus;
@@ -59,24 +63,38 @@ public class UserController {
 
     @GetMapping("/email/{email}")
     public ResponseEntity<?> getUserByEmail(
-            @PathVariable String email
+            @PathVariable String email,
+            @RequestHeader(value = "Authorization", required = false) String authorization
     ) {
+        User user = userService.findUserByEmailForToken(email, authorization);
+        return ResponseEntity.ok(userService.toProfileResponse(user));
+    }
 
-        try {
+    @GetMapping("/me")
+    public UserProfileResponse getCurrentProfile(
+            @RequestHeader(value = "Authorization", required = false) String authorization
+    ) {
+        return userService.getProfile(authorization);
+    }
 
-            User user =
-                    userService.findByEmail(email);
+    @PutMapping("/me")
+    public ProfileUpdateResponse updateCurrentProfile(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @RequestBody ProfileUpdateRequest request
+    ) {
+        User updatedUser = userService.updateProfile(authorization, request);
+        return new ProfileUpdateResponse(
+                userService.toProfileResponse(updatedUser),
+                userService.createTokenFor(updatedUser)
+        );
+    }
 
-            // Never expose password
-            user.setPassword(null);
-
-            return ResponseEntity.ok(user);
-
-        } catch (RuntimeException exception) {
-
-            return ResponseEntity
-                    .status(HttpStatus.NOT_FOUND)
-                    .body("User not found");
-        }
+    @PutMapping("/me/password")
+    public ResponseEntity<Void> changePassword(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @RequestBody PasswordChangeRequest request
+    ) {
+        userService.changePassword(authorization, request);
+        return ResponseEntity.noContent().build();
     }
 }

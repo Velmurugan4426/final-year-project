@@ -1,16 +1,28 @@
+import { useEffect, useState } from "react";
 import { Bell, Search } from "lucide-react";
 import LogoutButton from "./LogoutButton";
 
-function Header() {
+function readStoredUser() {
     const storedUser = localStorage.getItem("user");
-
-    let user = null;
-
     try {
-        user = storedUser ? JSON.parse(storedUser) : null;
+        return storedUser ? JSON.parse(storedUser) : null;
     } catch {
-        user = null;
+        return null;
     }
+}
+
+function Header() {
+    const [user, setUser] = useState(readStoredUser);
+
+    useEffect(() => {
+        const updateUser = () => setUser(readStoredUser());
+        window.addEventListener("user-profile-updated", updateUser);
+        window.addEventListener("storage", updateUser);
+        return () => {
+            window.removeEventListener("user-profile-updated", updateUser);
+            window.removeEventListener("storage", updateUser);
+        };
+    }, []);
 
     const userName = user?.name || "Learner";
 

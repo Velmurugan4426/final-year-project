@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
 import {
     LayoutDashboard,
@@ -47,7 +48,30 @@ const navigationItems = [
     }
 ];
 
+function readStoredUser() {
+    try {
+        const storedUser = localStorage.getItem("user");
+        return storedUser ? JSON.parse(storedUser) : null;
+    } catch {
+        return null;
+    }
+}
+
 function Sidebar() {
+    const [user, setUser] = useState(readStoredUser);
+    const userName = user?.name || "Learner";
+    const userInitial = userName.trim().charAt(0).toUpperCase() || "L";
+
+    useEffect(() => {
+        const updateUser = () => setUser(readStoredUser());
+        window.addEventListener("user-profile-updated", updateUser);
+        window.addEventListener("storage", updateUser);
+        return () => {
+            window.removeEventListener("user-profile-updated", updateUser);
+            window.removeEventListener("storage", updateUser);
+        };
+    }, []);
+
     return (
         <aside className="sidebar">
             <div className="brand">
@@ -82,11 +106,11 @@ function Sidebar() {
 
             <div className="sidebar-footer">
                 <div className="user-mini">
-                    <div className="avatar">V</div>
+                    <div className="avatar">{userInitial}</div>
 
                     <div>
-                        <strong>Learner</strong>
-                        <span>Student</span>
+                        <strong>{userName}</strong>
+                        <span>{user?.email || "Student"}</span>
                     </div>
                 </div>
             </div>

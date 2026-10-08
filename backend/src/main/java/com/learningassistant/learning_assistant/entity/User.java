@@ -48,6 +48,15 @@ public class User {
     )
     private String email;
 
+    @Column(name = "learning_goal", length = 500)
+    private String learningGoal;
+
+    @Column(name = "target_role", length = 100)
+    private String targetRole;
+
+    @Column(name = "experience_level", length = 30)
+    private String experienceLevel;
+
 
     // =========================================================
     // PASSWORD
@@ -135,6 +144,30 @@ public class User {
 
     public void setEmail(String email) {
         this.email = email;
+    }
+
+    public String getLearningGoal() {
+        return learningGoal;
+    }
+
+    public void setLearningGoal(String learningGoal) {
+        this.learningGoal = learningGoal;
+    }
+
+    public String getTargetRole() {
+        return targetRole;
+    }
+
+    public void setTargetRole(String targetRole) {
+        this.targetRole = targetRole;
+    }
+
+    public String getExperienceLevel() {
+        return experienceLevel;
+    }
+
+    public void setExperienceLevel(String experienceLevel) {
+        this.experienceLevel = experienceLevel;
     }
 
 

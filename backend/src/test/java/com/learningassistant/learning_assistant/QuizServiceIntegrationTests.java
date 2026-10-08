@@ -4,6 +4,9 @@ import com.learningassistant.learning_assistant.dto.QuizAttemptResponse;
 import com.learningassistant.learning_assistant.dto.QuizStartRequest;
 import com.learningassistant.learning_assistant.dto.QuizSubmitRequest;
 import com.learningassistant.learning_assistant.dto.AnalyticsResponse;
+import com.learningassistant.learning_assistant.dto.PasswordChangeRequest;
+import com.learningassistant.learning_assistant.dto.ProfileUpdateRequest;
+import com.learningassistant.learning_assistant.dto.UserProfileResponse;
 import com.learningassistant.learning_assistant.entity.StudyPlan;
 import com.learningassistant.learning_assistant.entity.StudyTask;
 import com.learningassistant.learning_assistant.entity.User;
@@ -12,10 +15,12 @@ import com.learningassistant.learning_assistant.repository.UserRepository;
 import com.learningassistant.learning_assistant.service.AnalyticsService;
 import com.learningassistant.learning_assistant.security.JwtService;
 import com.learningassistant.learning_assistant.service.QuizService;
+import com.learningassistant.learning_assistant.service.UserService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDate;
@@ -48,6 +53,75 @@ class QuizServiceIntegrationTests {
 
     @Autowired
     private StudyPlanRepository studyPlanRepository;
+
+    @Autowired
+    private UserService userService;
+
+    @Autowired
+    private PasswordEncoder passwordEncoder;
+
+    @Test
+    void profileUpdatesAreUserScopedAndPasswordChangesAreVerified() {
+        User user = createUser("profile-learner@example.com");
+        user.setPassword(passwordEncoder.encode("original-password"));
+        userRepository.save(user);
+        User otherUser = createUser("profile-other@example.com");
+        String token = "Bearer " + jwtService.generateToken(user.getEmail());
+        String otherToken = "Bearer " + jwtService.generateToken(otherUser.getEmail());
+
+        UserProfileResponse initialProfile = userService.getProfile(token);
+        assertEquals(user.getId(), initialProfile.userId());
+        assertEquals(user.getEmail(), initialProfile.email());
+        assertThrows(
+                org.springframework.web.server.ResponseStatusException.class,
+                () -> userService.findUserByEmailForToken(user.getEmail(), otherToken)
+        );
+        assertThrows(
+                org.springframework.web.server.ResponseStatusException.class,
+                () -> userService.getProfile(null)
+        );
+
+        User updated = userService.updateProfile(token, new ProfileUpdateRequest(
+                "Updated Learner",
+                "updated-profile@example.com",
+                "Prepare for technical interviews",
+                "Backend Engineer",
+                "INTERMEDIATE"
+        ));
+        String refreshedToken = "Bearer " + userService.createTokenFor(updated);
+
+        assertEquals("Updated Learner", userService.getProfile(refreshedToken).name());
+        assertEquals("Prepare for technical interviews", userService.getProfile(refreshedToken).learningGoal());
+        assertEquals("updated-profile@example.com", userService.getProfile(refreshedToken).email());
+        assertEquals(otherUser.getId(), userService.getProfile(otherToken).userId());
+        assertThrows(
+                org.springframework.web.server.ResponseStatusException.class,
+                () -> userService.updateProfile(
+                        otherToken,
+                        new ProfileUpdateRequest(
+                                "Other Learner",
+                                "updated-profile@example.com",
+                                "",
+                                "",
+                                ""
+                        )
+                )
+        );
+
+        userService.changePassword(
+                refreshedToken,
+                new PasswordChangeRequest("original-password", "new-secure-password")
+        );
+        User saved = userRepository.findById(user.getId()).orElseThrow();
+        assertTrue(passwordEncoder.matches("new-secure-password", saved.getPassword()));
+        assertThrows(
+                org.springframework.web.server.ResponseStatusException.class,
+                () -> userService.changePassword(
+                        refreshedToken,
+                        new PasswordChangeRequest("wrong-current-password", "another-password")
+                )
+        );
+    }
 
     @Test
     void analyticsAreScopedToUserAndReflectCompletedLearningActivity() {
