@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 
+const API_BASE = import.meta.env.VITE_API_URL || "";
+
 function Dashboard() {
     const [dashboard, setDashboard] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -26,7 +28,7 @@ function Dashboard() {
                 }
 
                 const response = await fetch(
-                    `http://localhost:8080/api/dashboard?email=${encodeURIComponent(
+                    `${API_BASE}/api/dashboard?email=${encodeURIComponent(
                         user.email
                     )}`,
                     {

@@ -45,6 +45,9 @@ public class TutorModelService {
     private static final String GROQ_URL =
             "https://api.groq.com/openai/v1/chat/completions";
 
+    private static final String GROK_URL =
+            "https://api.x.ai/v1/chat/completions";
+
     // ============================================================
     // COMMON AI TUTOR INSTRUCTIONS
     // ============================================================
@@ -66,6 +69,9 @@ public class TutorModelService {
 
     private final String groqApiKey;
     private final String groqModel;
+
+    private final String grokApiKey;
+    private final String grokModel;
 
     private final String primaryProvider;
 
@@ -99,6 +105,12 @@ public class TutorModelService {
             @Value("${groq.model:openai/gpt-oss-120b}")
             String groqModel,
 
+            @Value("${grok.api-key:}")
+            String grokApiKey,
+
+            @Value("${grok.model:grok-4.1-fast}")
+            String grokModel,
+
             @Value("${ai.provider:gemini}")
             String primaryProvider
 
@@ -109,6 +121,8 @@ public class TutorModelService {
 
         this.groqApiKey = groqApiKey;
         this.groqModel = groqModel;
+        this.grokApiKey = grokApiKey;
+        this.grokModel = grokModel;
 
         this.primaryProvider =
                 primaryProvider.toLowerCase(Locale.ROOT);
@@ -125,6 +139,59 @@ public class TutorModelService {
                 "AI Tutor primary provider: {}",
                 this.primaryProvider
         );
+    }
+
+    public QuizGenerationResult generateQuizQuestions(String prompt) {
+        List<String> errors = new ArrayList<>();
+
+        if (geminiApiKey != null && !geminiApiKey.isBlank()) {
+            try {
+                return new QuizGenerationResult(
+                        generateWithGemini(
+                                List.of(),
+                                prompt,
+                                "You create original technical interview questions. Follow the user's JSON schema exactly and return only the requested JSON."
+                        ),
+                        "Gemini"
+                );
+            } catch (ResponseStatusException exception) {
+                logger.warn("Quiz question generation with Gemini failed: {}", exception.getReason());
+                errors.add("Gemini: " + exception.getReason());
+            }
+        } else {
+            errors.add("Gemini: API key is not configured.");
+        }
+
+        if (grokApiKey != null && !grokApiKey.isBlank()) {
+            try {
+                String questions = generateWithGrok(prompt);
+                logger.info("Quiz question generation used Grok after Gemini was unavailable");
+                return new QuizGenerationResult(questions, "Grok");
+            } catch (ResponseStatusException exception) {
+                logger.warn("Quiz question generation with Grok failed: {}", exception.getReason());
+                errors.add("Grok: " + exception.getReason());
+            }
+        } else {
+            errors.add("Grok: API key is not configured.");
+        }
+
+        throw new ResponseStatusException(
+                HttpStatus.SERVICE_UNAVAILABLE,
+                "Gemini and Grok could not generate quiz questions. " + String.join(" | ", errors)
+        );
+    }
+
+    public QuizGenerationResult generateQuizQuestionsWithGrok(String prompt) {
+        if (grokApiKey == null || grokApiKey.isBlank()) {
+            throw new ResponseStatusException(
+                    HttpStatus.SERVICE_UNAVAILABLE,
+                    "Grok API key is not configured."
+            );
+        }
+        return new QuizGenerationResult(generateWithGrok(prompt), "Grok");
+    }
+
+    public record QuizGenerationResult(String content, String provider) {
     }
 
     // ============================================================
@@ -306,6 +373,14 @@ public class TutorModelService {
             List<TutorMessage> history,
             String question
     ) {
+        return generateWithGemini(history, question, TUTOR_INSTRUCTIONS);
+    }
+
+    private String generateWithGemini(
+            List<TutorMessage> history,
+            String question,
+            String instructions
+    ) {
 
         // --------------------------------------------------------
         // Gemini conversation contents
@@ -392,7 +467,7 @@ public class TutorModelService {
                                 Map.of(
 
                                         "text",
-                                        TUTOR_INSTRUCTIONS
+                                        instructions
                                 )
                         )
                 )
@@ -507,6 +582,38 @@ public class TutorModelService {
             List<TutorMessage> history,
             String question
     ) {
+        return generateWithOpenAiCompatible(
+                "Groq",
+                GROQ_URL,
+                groqApiKey,
+                groqModel,
+                history,
+                question,
+                TUTOR_INSTRUCTIONS
+        );
+    }
+
+    private String generateWithGrok(String prompt) {
+        return generateWithOpenAiCompatible(
+                "Grok",
+                GROK_URL,
+                grokApiKey,
+                grokModel,
+                List.of(),
+                prompt,
+                "Generate original technical interview assessment questions and follow the requested JSON format exactly."
+        );
+    }
+
+    private String generateWithOpenAiCompatible(
+            String provider,
+            String endpoint,
+            String apiKey,
+            String model,
+            List<TutorMessage> history,
+            String question,
+            String instructions
+    ) {
 
         // --------------------------------------------------------
         // Groq uses OpenAI-compatible messages
@@ -527,7 +634,7 @@ public class TutorModelService {
                         "system",
 
                         "content",
-                        TUTOR_INSTRUCTIONS
+                        instructions
                 )
         );
 
@@ -572,7 +679,7 @@ public class TutorModelService {
         );
 
         // --------------------------------------------------------
-        // Groq request body
+        // OpenAI-compatible request body
         // --------------------------------------------------------
 
         Map<String, Object> requestBody =
@@ -580,7 +687,7 @@ public class TutorModelService {
 
         requestBody.put(
                 "model",
-                groqModel
+                model
         );
 
         requestBody.put(
@@ -599,19 +706,19 @@ public class TutorModelService {
         );
 
         // --------------------------------------------------------
-        // Build Groq request
+        // Build OpenAI-compatible request
         // --------------------------------------------------------
 
         HttpRequest request =
                 buildRequest(
 
                         URI.create(
-                                GROQ_URL
+                                endpoint
                         ),
 
                         "Authorization",
 
-                        "Bearer " + groqApiKey,
+                        "Bearer " + apiKey,
 
                         requestBody
                 );
@@ -627,7 +734,7 @@ public class TutorModelService {
                 );
 
         // --------------------------------------------------------
-        // Extract Groq response
+        // Extract OpenAI-compatible response
         //
         // choices[0].message.content
         // --------------------------------------------------------
@@ -642,7 +749,7 @@ public class TutorModelService {
 
         return requireAnswer(
                 answer,
-                "Groq"
+        provider
         );
     }
 

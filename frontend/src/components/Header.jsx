@@ -8,7 +8,7 @@ function Header() {
 
     try {
         user = storedUser ? JSON.parse(storedUser) : null;
-    } catch (error) {
+    } catch {
         user = null;
     }
 
