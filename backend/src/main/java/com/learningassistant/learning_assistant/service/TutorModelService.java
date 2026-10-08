@@ -202,7 +202,27 @@ public class TutorModelService {
             List<TutorMessage> history,
             String question
     ) {
+        return generateReply(history, question, TUTOR_INSTRUCTIONS);
+    }
 
+    public String generateCodeAssistantReply(
+            List<TutorMessage> history,
+            String question
+    ) {
+        String instructions = "You are an expert software engineering coding assistant and patient pair programmer. "
+                + "Help debug, explain, review, optimize, and test code. Be technically precise, identify assumptions, "
+                + "explain root causes, and offer concrete corrected examples when useful. "
+                + "Never claim code was executed or verified unless it actually was. "
+                + "Flag security, correctness, accessibility, and performance risks when relevant. "
+                + "Use readable Markdown and fenced code blocks for code.";
+        return generateReply(history, question, instructions);
+    }
+
+    private String generateReply(
+            List<TutorMessage> history,
+            String question,
+            String instructions
+    ) {
         List<String> providers =
                 configuredProvidersInOrder();
 
@@ -242,15 +262,21 @@ public class TutorModelService {
                     answer =
                             generateWithGemini(
                                     history,
-                                    question
+                                    question,
+                                    instructions
                             );
 
                 } else {
 
                     answer =
-                            generateWithGroq(
+                            generateWithOpenAiCompatible(
+                                    "Groq",
+                                    GROQ_URL,
+                                    groqApiKey,
+                                    groqModel,
                                     history,
-                                    question
+                                    question,
+                                    instructions
                             );
                 }
 
@@ -577,21 +603,6 @@ public class TutorModelService {
     // ============================================================
     // GROQ
     // ============================================================
-
-    private String generateWithGroq(
-            List<TutorMessage> history,
-            String question
-    ) {
-        return generateWithOpenAiCompatible(
-                "Groq",
-                GROQ_URL,
-                groqApiKey,
-                groqModel,
-                history,
-                question,
-                TUTOR_INSTRUCTIONS
-        );
-    }
 
     private String generateWithGrok(String prompt) {
         return generateWithOpenAiCompatible(

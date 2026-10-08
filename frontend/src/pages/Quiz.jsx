@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import {
     ArrowLeft,
     ArrowRight,
@@ -76,8 +77,9 @@ const formatDate = (value) => {
 };
 
 function Quiz() {
+    const location = useLocation();
     const [view, setView] = useState("setup");
-    const [topic, setTopic] = useState(TOPICS[0]);
+    const [topic, setTopic] = useState(location.state?.topic || TOPICS[0]);
     const [difficulty, setDifficulty] = useState("Medium");
     const [questionCount, setQuestionCount] = useState(10);
     const [timeLimit, setTimeLimit] = useState(15);
