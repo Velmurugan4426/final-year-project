@@ -34,3 +34,4 @@ Thumbs.db
 # Project backup
 # ==============================
 backend-git-backup/
+backend/run-backend.ps1

@@ -84,8 +84,7 @@ const parseTopics = (value) => {
     return value
         .split(/[,;\n]+/)
         .map((topic) => topic.trim())
-        .filter(Boolean)
-        .slice(0, 50);
+        .filter(Boolean);
 };
 
 const getTaskDate = (task) => {
@@ -442,6 +441,13 @@ function StudyPlanner() {
             return;
         }
 
+        if (topics.length > 30) {
+            setError(
+                "You can add up to 30 topics."
+            );
+            return;
+        }
+
         if (!form.targetDate) {
             setError(
                 "Choose a target date."
@@ -670,11 +676,12 @@ function StudyPlanner() {
             {/* ERROR */}
 
             {error && (
-                <div className="planner-error">
+                <div className="planner-alert">
                     {error}
 
                     <button
-                        className="planner-text-button"
+                        className="planner-alert-close"
+                        aria-label="Dismiss error"
                         onClick={() =>
                             setError("")
                         }
@@ -780,9 +787,12 @@ function StudyPlanner() {
                                             className={`planner-plan-tab ${
                                                 plan.id ===
                                                 selectedPlanId
-                                                    ? "active"
+                                                    ? "is-active"
                                                     : ""
                                             }`}
+                                            aria-pressed={
+                                                plan.id === selectedPlanId
+                                            }
                                             onClick={() => {
                                                 setSelectedPlanId(
                                                     plan.id
@@ -997,15 +1007,16 @@ function StudyPlanner() {
 
                             </div>
 
-                            <div className="planner-filters">
+                            <div className="planner-filters" aria-label="Filter sessions">
 
                                 <button
                                     className={
                                         filter ===
                                         "all"
-                                            ? "active"
+                                        ? "is-active"
                                             : ""
                                     }
+                                    aria-pressed={filter === "all"}
                                     onClick={() =>
                                         setFilter(
                                             "all"
@@ -1019,9 +1030,10 @@ function StudyPlanner() {
                                     className={
                                         filter ===
                                         "pending"
-                                            ? "active"
+                                        ? "is-active"
                                             : ""
                                     }
+                                    aria-pressed={filter === "pending"}
                                     onClick={() =>
                                         setFilter(
                                             "pending"
@@ -1035,9 +1047,10 @@ function StudyPlanner() {
                                     className={
                                         filter ===
                                         "completed"
-                                            ? "active"
+                                        ? "is-active"
                                             : ""
                                     }
+                                    aria-pressed={filter === "completed"}
                                     onClick={() =>
                                         setFilter(
                                             "completed"
@@ -1053,7 +1066,7 @@ function StudyPlanner() {
 
                         {groupedTasks.length ===
                         0 ? (
-                            <div className="planner-empty-schedule">
+                            <div className="planner-no-sessions planner-empty-schedule">
                                 <CheckCircle2
                                     size={28}
                                 />
@@ -1069,7 +1082,7 @@ function StudyPlanner() {
                             </div>
                         ) : (
 
-                            <div className="planner-day-list">
+                            <div className="planner-timeline planner-day-list">
 
                                 {groupedTasks.map(
                                     ([date, tasks]) => (
@@ -1144,7 +1157,7 @@ function StudyPlanner() {
                                                             <div
                                                                 className={`planner-session ${
                                                                     task.completed
-                                                                        ? "completed"
+                                                                        ? "is-complete"
                                                                         : ""
                                                                 }`}
                                                                 key={
@@ -1232,7 +1245,7 @@ function StudyPlanner() {
 
             {showBuilder && (
                 <div
-                    className="planner-modal-overlay"
+                    className="planner-modal-backdrop"
                     onMouseDown={(event) => {
                         if (
                             event.target ===
@@ -1269,7 +1282,7 @@ function StudyPlanner() {
                             </div>
 
                             <button
-                                className="planner-builder-close"
+                                className="planner-close-button"
                                 onClick={
                                     closeBuilder
                                 }
@@ -1286,14 +1299,15 @@ function StudyPlanner() {
                             }
                         >
 
-                            <div className="planner-form-field">
+                            <div className="planner-field">
 
-                                <label>
+                                <label htmlFor="planner-goal">
                                     Learning goal
                                 </label>
 
                                 <input
                                     name="goal"
+                                    id="planner-goal"
                                     value={
                                         form.goal
                                     }
@@ -1307,14 +1321,15 @@ function StudyPlanner() {
 
                             </div>
 
-                            <div className="planner-form-field">
+                            <div className="planner-field">
 
-                                <label>
+                                <label htmlFor="planner-topics">
                                     Topics
                                 </label>
 
                                 <textarea
                                     name="topics"
+                                    id="planner-topics"
                                     value={
                                         form.topics
                                     }
@@ -1333,16 +1348,17 @@ function StudyPlanner() {
 
                             </div>
 
-                            <div className="planner-form-row">
+                            <div className="planner-form-grid">
 
-                                <div className="planner-form-field">
+                                <div className="planner-field">
 
-                                    <label>
+                                    <label htmlFor="planner-level">
                                         Current level
                                     </label>
 
                                     <select
                                         name="currentLevel"
+                                        id="planner-level"
                                         value={
                                             form.currentLevel
                                         }
@@ -1365,14 +1381,15 @@ function StudyPlanner() {
 
                                 </div>
 
-                                <div className="planner-form-field">
+                                <div className="planner-field">
 
-                                    <label>
+                                    <label htmlFor="planner-daily-minutes">
                                         Daily study time
                                     </label>
 
                                     <select
                                         name="dailyMinutes"
+                                        id="planner-daily-minutes"
                                         value={
                                             form.dailyMinutes
                                         }
@@ -1409,21 +1426,27 @@ function StudyPlanner() {
 
                             </div>
 
-                            <div className="planner-form-row">
+                            <div className="planner-form-grid">
 
-                                <div className="planner-form-field">
+                                <div className="planner-field">
 
-                                    <label>
+                                    <label htmlFor="planner-target-date">
                                         Target date
                                     </label>
 
                                     <input
                                         type="date"
                                         name="targetDate"
+                                        id="planner-target-date"
                                         value={
                                             form.targetDate
                                         }
                                         min={today()}
+                                        max={dateValue(new Date(
+                                            new Date().setDate(
+                                                new Date().getDate() + MAX_PLAN_DAYS
+                                            )
+                                        ))}
                                         onChange={
                                             updateForm
                                         }
@@ -1431,11 +1454,11 @@ function StudyPlanner() {
 
                                 </div>
 
-                                <div className="planner-form-field">
+                                <div className="planner-field">
 
-                                    <label>
+                                    <span className="planner-field-label">
                                         Priority
-                                    </label>
+                                    </span>
 
                                     <div className="planner-priority-options">
 
@@ -1452,12 +1475,12 @@ function StudyPlanner() {
                                                     key={
                                                         priority
                                                     }
-                                                    className={
-                                                        form.priority ===
-                                                        priority
-                                                            ? "active"
+                                                    className={`planner-priority-option ${
+                                                        form.priority === priority
+                                                            ? "is-selected"
                                                             : ""
-                                                    }
+                                                    }`}
+                                                    aria-pressed={form.priority === priority}
                                                     onClick={() =>
                                                         setForm(
                                                             (
@@ -1482,7 +1505,7 @@ function StudyPlanner() {
 
                             </div>
 
-                            <div className="planner-builder-note">
+                            <div className="planner-ai-preview planner-builder-note">
 
                                 <Sparkles
                                     size={15}
