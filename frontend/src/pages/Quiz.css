@@ -1254,3 +1254,285 @@
         padding: 14px;
     }
 }
+
+.quiz-page {
+    font-size: 16px;
+}
+
+.quiz-kicker,
+.quiz-question-meta > span:first-child,
+.quiz-review-question-top > span:first-child {
+    font-size: 12px;
+}
+
+.quiz-page-heading h1 {
+    font-size: clamp(32px, 3.5vw, 42px);
+}
+
+.quiz-page-heading p,
+.quiz-exam-heading p {
+    font-size: 16px;
+    line-height: 1.6;
+}
+
+.quiz-heading-badge {
+    padding: 12px 16px;
+    font-size: 14px;
+}
+
+.quiz-card-heading h2,
+.quiz-side-heading h2,
+.quiz-section-heading h2 {
+    font-size: 22px;
+}
+
+.quiz-card-icon {
+    width: 48px;
+    height: 48px;
+}
+
+.quiz-form-field > label,
+.quiz-field-label-row label {
+    font-size: 15px;
+}
+
+.quiz-field-label-row span {
+    font-size: 12px;
+}
+
+.quiz-select-wrap select {
+    height: 50px;
+    font-size: 15px;
+}
+
+.quiz-segmented button,
+.quiz-count-options button {
+    min-height: 45px;
+    font-size: 14px;
+}
+
+.quiz-count-options small {
+    font-size: 12px;
+}
+
+.quiz-start-note {
+    font-size: 13px;
+}
+
+.quiz-primary-button,
+.quiz-secondary-button {
+    min-height: 46px;
+    font-size: 14px;
+}
+
+.quiz-start-button {
+    min-height: 54px;
+    font-size: 16px;
+}
+
+.quiz-ai-caption {
+    font-size: 12px;
+}
+
+.quiz-side-card {
+    padding: 22px;
+}
+
+.quiz-focus-row {
+    min-height: 60px;
+}
+
+.quiz-focus-name strong,
+.quiz-focus-score {
+    font-size: 14px;
+}
+
+.quiz-focus-name small,
+.quiz-empty-focus p,
+.quiz-streak-card span {
+    font-size: 12px;
+}
+
+.quiz-streak-card strong {
+    font-size: 20px;
+}
+
+.quiz-review-count {
+    font-size: 12px;
+}
+
+.quiz-history-row {
+    min-height: 72px;
+}
+
+.quiz-history-icon {
+    width: 42px;
+    height: 42px;
+}
+
+.quiz-history-topic strong,
+.quiz-history-score,
+.quiz-history-empty strong {
+    font-size: 14px;
+}
+
+.quiz-history-topic small,
+.quiz-history-empty span {
+    font-size: 12px;
+}
+
+.quiz-footer-note {
+    font-size: 12px;
+}
+
+.quiz-alert,
+.quiz-inline-error,
+.quiz-source-note {
+    font-size: 14px;
+}
+
+.quiz-loading {
+    font-size: 16px;
+}
+
+.quiz-back-button {
+    font-size: 14px;
+}
+
+.quiz-timer {
+    padding: 11px 14px;
+}
+
+.quiz-timer span {
+    font-size: 17px;
+}
+
+.quiz-timer small,
+.quiz-exam-progress-copy {
+    font-size: 12px;
+}
+
+.quiz-exam-heading h1 {
+    font-size: 32px;
+}
+
+.quiz-exam-progress-copy strong {
+    font-size: 28px;
+}
+
+.quiz-skill-chip {
+    font-size: 12px;
+}
+
+.quiz-question-card h2 {
+    font-size: clamp(21px, 2.4vw, 26px);
+    line-height: 1.6;
+}
+
+.quiz-option {
+    min-height: 58px;
+    font-size: 16px;
+    line-height: 1.5;
+}
+
+.quiz-option-letter {
+    width: 32px;
+    height: 32px;
+    font-size: 14px;
+}
+
+.quiz-question-dots button {
+    width: 34px;
+    height: 34px;
+    font-size: 13px;
+}
+
+.quiz-exam-actions > span {
+    font-size: 12px;
+}
+
+.quiz-result-hero h1 {
+    font-size: clamp(26px, 3.2vw, 34px);
+}
+
+.quiz-result-hero > p {
+    font-size: 14px;
+}
+
+.quiz-score-stat strong {
+    font-size: 17px;
+}
+
+.quiz-score-stat span {
+    font-size: 12px;
+}
+
+.quiz-weak-card {
+    padding: 16px;
+}
+
+.quiz-weak-card-top strong,
+.quiz-weak-card-top span {
+    font-size: 14px;
+}
+
+.quiz-weak-card p,
+.quiz-weak-card button {
+    font-size: 12px;
+}
+
+.quiz-review-card h3 {
+    font-size: 16px;
+}
+
+.quiz-answer-status {
+    font-size: 12px;
+}
+
+.quiz-review-option {
+    min-height: 40px;
+}
+
+.quiz-review-option > span {
+    width: 24px;
+    height: 24px;
+    font-size: 12px;
+}
+
+.quiz-review-option p,
+.quiz-explanation p {
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+@media (max-width: 640px) {
+    .quiz-page-heading h1 {
+        font-size: 32px;
+    }
+
+    .quiz-page-heading p,
+    .quiz-exam-heading p {
+        font-size: 14px;
+    }
+
+    .quiz-exam-heading h1 {
+        font-size: 25px;
+    }
+
+    .quiz-question-card h2 {
+        font-size: 20px;
+    }
+
+    .quiz-option {
+        min-height: 56px;
+        font-size: 15px;
+    }
+
+    .quiz-score-stat strong {
+        font-size: 14px;
+    }
+
+    .quiz-score-stat span {
+        font-size: 11px;
+    }
+}
