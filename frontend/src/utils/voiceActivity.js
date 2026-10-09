@@ -10,7 +10,8 @@ export function calculateAudioRms(samples) {
 
 export function createVoiceActivityDetector({
     noSpeechTimeoutMs,
-    endSilenceMs
+    endSilenceMs,
+    sensitivity = 1
 }, startedAt = Date.now()) {
     const noiseSamples = [];
     let speechFrames = 0;
@@ -28,7 +29,8 @@ export function createVoiceActivityDetector({
             const noiseFloor = sortedNoise.length
                 ? sortedNoise[Math.floor((sortedNoise.length - 1) * 0.25)]
                 : 0;
-            const threshold = Math.max(0.014, Math.min(0.06, noiseFloor * 2 + 0.008));
+            const adjustedThreshold = (noiseFloor * 2 + 0.008) / Math.max(0.5, Math.min(2, sensitivity));
+            const threshold = Math.max(0.014, Math.min(0.06, adjustedThreshold));
 
             if (rms >= threshold) {
                 speechFrames += 1;

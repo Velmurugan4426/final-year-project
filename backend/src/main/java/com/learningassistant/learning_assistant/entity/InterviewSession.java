@@ -15,6 +15,7 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OrderColumn;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -30,6 +31,10 @@ public class InterviewSession {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
+    @Version
+    @Column(nullable = false, columnDefinition = "BIGINT DEFAULT 0")
+    private long version;
 
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "user_id", nullable = false)
@@ -105,6 +110,10 @@ public class InterviewSession {
 
     public Long getId() {
         return id;
+    }
+
+    public long getVersion() {
+        return version;
     }
 
     public User getUser() {
@@ -237,6 +246,12 @@ public class InterviewSession {
         @Column(name = "question_text", nullable = false, columnDefinition = "text")
         private String question;
 
+        @Column(name = "processing_started_at")
+        private LocalDateTime processingStartedAt;
+
+        @Column(name = "generation_token", length = 36)
+        private String generationToken;
+
         @Column(name = "answer_text", columnDefinition = "text")
         private String answer;
 
@@ -260,6 +275,22 @@ public class InterviewSession {
 
         public void setQuestion(String question) {
             this.question = question;
+        }
+
+        public LocalDateTime getProcessingStartedAt() {
+            return processingStartedAt;
+        }
+
+        public void setProcessingStartedAt(LocalDateTime processingStartedAt) {
+            this.processingStartedAt = processingStartedAt;
+        }
+
+        public String getGenerationToken() {
+            return generationToken;
+        }
+
+        public void setGenerationToken(String generationToken) {
+            this.generationToken = generationToken;
         }
 
         public String getAnswer() {

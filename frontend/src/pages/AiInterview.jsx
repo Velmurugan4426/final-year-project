@@ -28,6 +28,11 @@ import { fetchWithTimeout } from "../utils/apiRequest";
 import { calculateAudioRms, createVoiceActivityDetector } from "../utils/voiceActivity";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
+const AUTO_SKIP_NO_SPEECH = import.meta.env.VITE_INTERVIEW_AUTO_SKIP_NO_SPEECH === "true";
+const VOICE_ACTIVITY_SENSITIVITY = Math.min(
+    2,
+    Math.max(0.5, Number(import.meta.env.VITE_INTERVIEW_VOICE_SENSITIVITY) || 1)
+);
 const NO_SPEECH_TIMEOUT_MS = Math.min(
     60_000,
     Math.max(5_000, Number(import.meta.env.VITE_INTERVIEW_NO_SPEECH_TIMEOUT_MS) || 15_000)
@@ -112,6 +117,7 @@ function formatDate(value) {
 }
 
 function statusLabel(status) {
+    if (status === "PREPARING") return "Preparing opening question";
     if (status === "TERMINATED") return "Terminated";
     if (status === "TIME_EXPIRED") return "Time expired";
     if (status === "COMPLETED") return "Completed";
@@ -119,7 +125,7 @@ function statusLabel(status) {
 }
 
 function isInterviewActive(status) {
-    return status === "IN_PROGRESS" || status === "ACTIVE";
+    return status === "IN_PROGRESS" || status === "ACTIVE" || status === "PREPARING";
 }
 
 function modeLabel(mode) {
@@ -356,7 +362,8 @@ export default function AiInterview() {
         if (!updatedSession) return;
         const currentSession = sessionRef.current;
         if (currentSession?.id === updatedSession.id
-                && ((updatedSession.transcript?.length || 0) < (currentSession.transcript?.length || 0)
+                && ((updatedSession.revision ?? 0) < (currentSession.revision ?? 0)
+                    || (updatedSession.transcript?.length || 0) < (currentSession.transcript?.length || 0)
                     || (!isInterviewActive(currentSession.status)
                         && isInterviewActive(updatedSession.status)))) {
             return;
@@ -370,9 +377,10 @@ export default function AiInterview() {
         });
         const remaining = updatedSession.remainingSeconds || 0;
         timerDeadlineRef.current = isInterviewActive(updatedSession.status)
+                && updatedSession.status !== "PREPARING"
             ? Date.now() + remaining * 1000
             : 0;
-        setRemainingSeconds(remaining);
+        setRemainingSeconds(updatedSession.status === "PREPARING" ? 0 : remaining);
         updateHistory(updatedSession);
 
         if (!isInterviewActive(updatedSession.status)) {
@@ -522,7 +530,14 @@ export default function AiInterview() {
         if (!sessionId || !isInterviewActive(sessionStatus)) {
             timerDeadlineRef.current = 0;
             setRemainingSeconds(0);
+            return undefined;
         }
+        if (sessionStatus === "PREPARING") {
+            timerDeadlineRef.current = 0;
+            setRemainingSeconds(0);
+            return undefined;
+        }
+        return undefined;
     }, [sessionId, sessionStatus]);
 
     useEffect(() => {
@@ -552,8 +567,33 @@ export default function AiInterview() {
         return () => window.clearInterval(interval);
     }, [applySessionResponse, sessionId, sessionStatus]);
 
+    const currentTurnStatus = session?.transcript?.at(-1)?.status;
     useEffect(() => {
-        if (!sessionId || !isInterviewActive(sessionStatus)) return undefined;
+        if (!sessionId || !isInterviewActive(sessionStatus)
+                || !["PROCESSING", "SKIP_PROCESSING"].includes(currentTurnStatus)) {
+            return undefined;
+        }
+        let cancelled = false;
+        let timer;
+        const pollForProgress = async () => {
+            try {
+                const result = await interviewRequest(`/api/ai-interview/sessions/${sessionId}`);
+                if (!cancelled && result.id === sessionId) applySessionResponse(result);
+            } catch (error) {
+                if (!cancelled) setAlert(error.message);
+            } finally {
+                if (!cancelled) timer = window.setTimeout(pollForProgress, 1_000);
+            }
+        };
+        timer = window.setTimeout(pollForProgress, 500);
+        return () => {
+            cancelled = true;
+            window.clearTimeout(timer);
+        };
+    }, [applySessionResponse, currentTurnStatus, sessionId, sessionStatus]);
+
+    useEffect(() => {
+        if (!sessionId || !isInterviewActive(sessionStatus) || sessionStatus === "PREPARING") return undefined;
 
         let expiryCheckStarted = false;
         const updateClock = () => {
@@ -958,6 +998,25 @@ export default function AiInterview() {
         setRecordingVoice(false);
         await progressInterview({ skipped: true });
     }, [busy, progressInterview, recordingVoice]);
+
+    const retryInterviewProgress = useCallback(async () => {
+        if (!sessionId || answerSubmittingRef.current || busy) return;
+        answerSubmittingRef.current = true;
+        setBusy(true);
+        setAlert("");
+        try {
+            const result = await interviewRequest(
+                `/api/ai-interview/sessions/${sessionId}/retry`,
+                { method: "POST" }
+            );
+            applySessionResponse(result);
+        } catch (error) {
+            setAlert(error.message);
+        } finally {
+            answerSubmittingRef.current = false;
+            setBusy(false);
+        }
+    }, [applySessionResponse, busy, sessionId]);
 
     const submitAnswer = useCallback(async (event) => {
         event.preventDefault();
@@ -1490,8 +1549,9 @@ export default function AiInterview() {
             });
             const activityDetector = createVoiceActivityDetector({
                 noSpeechTimeoutMs: NO_SPEECH_TIMEOUT_MS,
-                endSilenceMs: END_OF_SPEECH_SILENCE_MS
-            });
+                    endSilenceMs: END_OF_SPEECH_SILENCE_MS,
+                    sensitivity: VOICE_ACTIVITY_SENSITIVITY
+                });
             discardRecordingRef.current = false;
             recorder.start(1000);
             startRecognition();
@@ -1513,8 +1573,10 @@ export default function AiInterview() {
                     recognitionRef.current = null;
                     if (recorder.state === "recording") recorder.stop();
                     setRecordingVoice(false);
-                    setAlert("No speech was detected. Moving to the next question.");
-                    void progressInterview({ skipped: true });
+                    setAlert(AUTO_SKIP_NO_SPEECH
+                        ? "No speech was detected. Moving to the next question."
+                        : "No speech was detected. The question is still open; start voice input again when you are ready.");
+                    if (AUTO_SKIP_NO_SPEECH) void progressInterview({ skipped: true });
                     return;
                 }
                 if (activity.speechEnded) {
@@ -1570,6 +1632,8 @@ export default function AiInterview() {
     const assessment = parseAssessment(session?.feedback);
     const latestAnswerFeedback = session?.transcript?.slice().reverse()
         .find((turn) => turn.feedback && turn.status === "ANSWERED");
+    const generationPending = ["PROCESSING", "SKIP_PROCESSING"].includes(currentTurnStatus);
+    const generationRetryRequired = ["RETRY_REQUIRED", "SKIP_RETRY_REQUIRED"].includes(currentTurnStatus);
 
     if (loading) {
         return (
@@ -1907,7 +1971,9 @@ export default function AiInterview() {
                                 <div className="interview-question-heading">
                                     <span className="interview-eyebrow">{modeLabel(session.interviewMode)}</span>
                                     <div className="interview-question-controls">
-                                        <span className="interview-timer"><Clock3 size={14} /> Time remaining {formatRemaining(remainingSeconds)}</span>
+                                        <span className="interview-timer"><Clock3 size={14} /> {session.status === "PREPARING"
+                                            ? "Preparing opening question"
+                                            : `Time remaining ${formatRemaining(remainingSeconds)}`}</span>
                                         <label className="interview-voice-setting">
                                             <span>Interviewer voice</span>
                                             <select
@@ -1927,7 +1993,7 @@ export default function AiInterview() {
                                             <select
                                                 aria-label="Answer language"
                                                 value={transcriptionLanguage}
-                                                disabled={recordingVoice || busy}
+                                                disabled={recordingVoice || busy || generationPending}
                                                 onChange={(event) => setTranscriptionLanguage(event.target.value)}
                                             >
                                                 <option value="en">English</option>
@@ -1941,7 +2007,7 @@ export default function AiInterview() {
                                         <button
                                             className="interview-secondary-button interview-read-question"
                                             type="button"
-                                            disabled={questionSpeaking || recordingVoice || busy}
+                                            disabled={questionSpeaking || recordingVoice || busy || generationPending || !session.currentQuestion}
                                             onClick={() => speakQuestion(session.currentQuestion)}
                                         >
                                             <Volume2 size={14} />
@@ -1949,7 +2015,35 @@ export default function AiInterview() {
                                         </button>
                                     </div>
                                 </div>
-                                <p className="interview-question-text">{session.currentQuestion}</p>
+                                <p className="interview-question-text">{session.currentQuestion
+                                    || (session.status === "PREPARING" ? "Preparing your personalized opening question..." : "")}</p>
+                                {generationPending && (
+                                    <p className="interview-speech-note" role="status" aria-live="polite">
+                                        <LoaderCircle className="interview-spinner" size={14} />
+                                        {session.status === "PREPARING"
+                                            ? "Setting up your interview. The timer starts when the opening question is ready."
+                                            : "Your answer is saved. Preparing the next interview step and feedback..."}
+                                    </p>
+                                )}
+                                {generationRetryRequired && (
+                                    <div className="interview-answer-feedback" role="alert">
+                                        <strong>{session.status === "PREPARING"
+                                            ? "The opening question could not be prepared yet."
+                                            : currentTurnStatus === "SKIP_RETRY_REQUIRED"
+                                                ? "The skipped question needs its next interview step retried."
+                                                : "Your answer is saved, but interview generation needs to be retried."}</strong>
+                                        <p>Retry safely to continue; saved answers will not be submitted twice.</p>
+                                        <button
+                                            className="interview-primary-button"
+                                            type="button"
+                                            disabled={busy}
+                                            onClick={() => void retryInterviewProgress()}
+                                        >
+                                            {busy ? <LoaderCircle className="interview-spinner" size={15} /> : <ArrowRight size={15} />}
+                                            Retry next step
+                                        </button>
+                                    </div>
+                                )}
                                 {latestAnswerFeedback && (
                                     <div className="interview-answer-feedback" role="status">
                                         <strong>Feedback on your previous answer</strong>
@@ -1978,20 +2072,20 @@ export default function AiInterview() {
                                             <button
                                                 className="interview-secondary-button"
                                                 type="button"
-                                            disabled={busy}
+                                            disabled={busy || generationPending}
                                                 onClick={startVoiceAnswer}
                                             >
                                                 <Mic size={14} /> Answer by voice
                                             </button>
                                         )}
-                                        <button className="interview-primary-button" type="submit" disabled={busy || recordingVoice || !answer.trim() || !sessionIsActive || remainingSeconds <= 0}>
+                                        <button className="interview-primary-button" type="submit" disabled={busy || generationPending || generationRetryRequired || recordingVoice || !answer.trim() || !sessionIsActive || remainingSeconds <= 0}>
                                             {busy ? <LoaderCircle className="interview-spinner" size={15} /> : <ArrowRight size={15} />}
                                             Submit answer
                                         </button>
                                         <button
                                             className="interview-secondary-button"
                                             type="button"
-                                            disabled={busy || recordingVoice || !sessionIsActive || remainingSeconds <= 0}
+                                            disabled={busy || generationPending || generationRetryRequired || recordingVoice || !sessionIsActive || remainingSeconds <= 0}
                                             onClick={() => void skipQuestion()}
                                         >
                                             Skip question
@@ -2001,8 +2095,8 @@ export default function AiInterview() {
                                         {questionSpeaking
                                             ? "Listen to the question before answering. The microphone stays off while it is being read."
                                             : recordingVoice
-                                                ? `Listening for speech. Silence for ${Math.round(NO_SPEECH_TIMEOUT_MS / 1000)} seconds skips the question; ${Math.round(END_OF_SPEECH_SILENCE_MS / 1000)} seconds of silence after speech ends recording.`
-                                                : "Answers are voice-only. Recording stops automatically when you finish speaking. Silence will skip the question; review the transcript before submitting. Audio is sent for transcription and is not stored by this application."}
+                                                ? `Listening for speech. ${AUTO_SKIP_NO_SPEECH ? "Silence" : "No speech"} for ${Math.round(NO_SPEECH_TIMEOUT_MS / 1000)} seconds ${AUTO_SKIP_NO_SPEECH ? "skips the question" : "stops recording but keeps the question open"}; ${Math.round(END_OF_SPEECH_SILENCE_MS / 1000)} seconds of silence after speech ends recording.`
+                                                : `Answers are voice-only. Recording stops automatically when you finish speaking. ${AUTO_SKIP_NO_SPEECH ? "Silence skips the question" : "Silence leaves the question open"}; review the transcript before submitting. Audio is sent for transcription and is not stored by this application.`}
                                     </p>
                                 </form>
                             </section>

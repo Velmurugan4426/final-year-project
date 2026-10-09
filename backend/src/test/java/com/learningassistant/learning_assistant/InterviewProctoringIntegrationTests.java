@@ -2,6 +2,7 @@ package com.learningassistant.learning_assistant;
 
 import com.learningassistant.learning_assistant.dto.InterviewAnswerRequest;
 import com.learningassistant.learning_assistant.dto.InterviewFlagRequest;
+import com.learningassistant.learning_assistant.dto.InterviewSessionResponse;
 import com.learningassistant.learning_assistant.dto.InterviewStartRequest;
 import com.learningassistant.learning_assistant.entity.InterviewAccess;
 import com.learningassistant.learning_assistant.entity.InterviewResume;
@@ -36,11 +37,13 @@ import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Predicate;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -368,48 +371,58 @@ class InterviewProctoringIntegrationTests {
                 }
                 """;
         String completion = """
-                {"decision":"COMPLETE","difficulty":"ADVANCED","question":"",
-                 "answerFeedback":"Your answer appropriately prioritized measuring before scaling.",
-                 "feedback":%s}
+                {"decision":"COMPLETE","difficulty":"ADVANCED","question":"","feedback":%s}
                 """.formatted(feedback);
-        when(tutorModelService.generateInterviewReply(anyList(), anyString()))
-                .thenAnswer(invocation -> {
-                    Thread.sleep(2_000);
-                    return "{\"decision\":\"CONTINUE\",\"difficulty\":\"BEGINNER\",\"question\":\"Describe how you would structure a Java service.\"}";
-                })
+        when(tutorModelService.generateInterviewQuestionReply(anyList(), anyString()))
                 .thenReturn(
+                        "{\"decision\":\"CONTINUE\",\"difficulty\":\"BEGINNER\",\"question\":\"Describe how you would structure a Java service.\"}",
                         "{\"decision\":\"CONTINUE\",\"difficulty\":\"ADVANCED\","
-                                + "\"question\":\"How would you scale this service under heavy load?\","
-                                + "\"answerFeedback\":\"You gave a clear explanation of service boundaries.\"}",
+                                + "\"question\":\"How would you scale this service under heavy load?\"}",
                         completion
                 );
+        when(tutorModelService.generateInterviewEvaluationReply(anyList(), anyString()))
+                .thenAnswer(invocation -> {
+                    String prompt = invocation.getArgument(1);
+                    if (prompt.contains("Create an evidence-based practice assessment")) return feedback;
+                    if (prompt.contains("measure first")) {
+                        return "Your answer appropriately prioritized measuring before scaling.";
+                    }
+                    return "You gave a clear explanation of service boundaries.";
+                });
 
-        var started = interviewService.startSession(
+        var preparing = interviewService.startSession(
                 authorization,
                 new InterviewStartRequest("Java Developer", "TECHNICAL", "BEGINNER")
         );
+        var started = awaitSession(authorization, preparing.id(), current ->
+                "IN_PROGRESS".equals(current.status()) && current.currentQuestion() != null);
         assertEquals("TECHNICAL", started.interviewMode());
         assertEquals("BEGINNER", started.difficulty());
         assertEquals("IN_PROGRESS", started.status());
         assertTrue(started.expiresAt().isAfter(started.startedAt()));
         assertTrue(started.remainingSeconds() >= 299, "AI opening-question latency must not reduce interview time");
 
-        var continued = interviewService.answer(
+        interviewService.answer(
                 authorization,
                 started.id(),
                 new InterviewAnswerRequest("I would separate business logic into a testable service.")
         );
+        var continued = awaitSession(authorization, started.id(), current ->
+                current.transcript().size() == 2
+                        && "ANSWERED".equals(current.transcript().getFirst().status()));
         assertEquals("IN_PROGRESS", continued.status());
         assertEquals("How would you scale this service under heavy load?", continued.currentQuestion());
         assertEquals(2, continued.transcript().size());
         assertEquals("ANSWERED", continued.transcript().getFirst().status());
         assertTrue(continued.transcript().getFirst().feedback().contains("service boundaries"));
 
-        var completed = interviewService.answer(
+        interviewService.answer(
                 authorization,
                 started.id(),
                 new InterviewAnswerRequest("I would measure first, then apply caching and horizontal scaling.")
         );
+        var completed = awaitSession(authorization, started.id(), current ->
+                "COMPLETED".equals(current.status()));
         assertEquals("COMPLETED", completed.status());
         assertEquals("ANSWERED", completed.transcript().getLast().status());
         assertTrue(completed.transcript().getLast().feedback().contains("measuring before scaling"));
@@ -418,11 +431,53 @@ class InterviewProctoringIntegrationTests {
         assertTrue(completed.feedback().contains("NEEDS_IMPROVEMENT"));
         assertTrue(completed.feedback().contains("Practice system design scenarios."));
         assertEquals(2, completed.transcript().size());
-        verify(tutorModelService, times(3)).generateInterviewReply(anyList(), anyString());
+        verify(tutorModelService, times(3)).generateInterviewQuestionReply(anyList(), anyString());
+        verify(tutorModelService, times(3)).generateInterviewEvaluationReply(anyList(), anyString());
     }
 
     @Test
-    void skipsSilenceAndReleasesProcessingStateAfterProviderFailure() {
+    void failedOpeningIsPersistedAndCanBeRetriedWithoutRestartingSetup() throws InterruptedException {
+        User user = userRepository.save(new User(
+                "Opening retry learner",
+                "opening-retry-" + UUID.randomUUID() + "@example.com",
+                "test-password"
+        ));
+        String authorization = "Bearer " + jwtService.generateToken(user.getEmail());
+        InterviewAccess access = new InterviewAccess();
+        access.setUser(user);
+        access.setStartsAt(java.time.LocalDateTime.now().minusMinutes(1));
+        access.setExpiresAt(java.time.LocalDateTime.now().plusDays(1));
+        access.setSource("ADMIN_GRANT");
+        accessRepository.save(access);
+        InterviewResume resume = new InterviewResume();
+        resume.setUser(user);
+        resume.setFileName("practice-resume.pdf");
+        resume.setResumeText("Java developer.");
+        resume.setFileData(new byte[]{1});
+        resumeRepository.save(resume);
+        when(tutorModelService.generateInterviewQuestionReply(anyList(), anyString()))
+                .thenThrow(new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Provider unavailable."))
+                .thenReturn("{\"decision\":\"CONTINUE\",\"difficulty\":\"INTERMEDIATE\","
+                        + "\"question\":\"Tell me about your most relevant Java project?\"}");
+
+        var accepted = interviewService.startSession(
+                authorization,
+                new InterviewStartRequest("Java Developer", "TECHNICAL", "INTERMEDIATE")
+        );
+        var retryable = awaitSession(authorization, accepted.id(), current ->
+                current.transcript().getFirst().status().equals("RETRY_REQUIRED"));
+        assertNull(retryable.currentQuestion());
+
+        interviewService.retryProgress(authorization, accepted.id());
+        var started = awaitSession(authorization, accepted.id(), current ->
+                "IN_PROGRESS".equals(current.status()) && current.currentQuestion() != null);
+        assertEquals("Tell me about your most relevant Java project?", started.currentQuestion());
+        assertEquals("PENDING", started.transcript().getFirst().status());
+        assertTrue(started.remainingSeconds() >= 299);
+    }
+
+    @Test
+    void skipsSilenceAndPreservesTheAnswerForProviderFailureRetry() throws InterruptedException {
         User user = userRepository.save(new User(
                 "Interview recovery learner",
                 "recovery-" + UUID.randomUUID() + "@example.com",
@@ -442,7 +497,7 @@ class InterviewProctoringIntegrationTests {
         resume.setFileData(new byte[]{1, 2, 3});
         resumeRepository.save(resume);
 
-        when(tutorModelService.generateInterviewReply(anyList(), anyString()))
+        when(tutorModelService.generateInterviewQuestionReply(anyList(), anyString()))
                 .thenReturn(
                         "Describe a recent Java project.",
                         "{\"decision\":\"CONTINUE\",\"difficulty\":\"INTERMEDIATE\","
@@ -450,40 +505,42 @@ class InterviewProctoringIntegrationTests {
                 )
                 .thenThrow(new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Provider unavailable."))
                 .thenReturn("{\"decision\":\"CONTINUE\",\"difficulty\":\"INTERMEDIATE\","
-                        + "\"question\":\"How do you manage database transactions?\","
-                        + "\"answerFeedback\":\"You identified a relevant service-testing approach.\"}");
+                        + "\"question\":\"How do you manage database transactions?\"}");
+        when(tutorModelService.generateInterviewEvaluationReply(anyList(), anyString()))
+                .thenReturn("You identified a relevant service-testing approach.");
 
-        var started = interviewService.startSession(
+        var preparing = interviewService.startSession(
                 authorization,
                 new InterviewStartRequest("Java Developer", "TECHNICAL", "INTERMEDIATE")
         );
-        var skipped = interviewService.skip(authorization, started.id());
+        var started = awaitSession(authorization, preparing.id(), current ->
+                "IN_PROGRESS".equals(current.status()) && current.currentQuestion() != null);
+        interviewService.skip(authorization, started.id());
+        var skipped = awaitSession(authorization, started.id(), current ->
+                "SKIPPED".equals(current.transcript().getFirst().status()));
         assertEquals("SKIPPED", skipped.transcript().getFirst().status());
         assertNull(skipped.transcript().getFirst().answer());
         assertEquals("How do you test a Spring service?", skipped.currentQuestion());
-        assertTrue(skipped.transcript().getFirst().feedback().contains("No speech was detected"));
+        assertTrue(skipped.transcript().getFirst().feedback().contains("skipped by candidate"));
 
-        assertThrows(
-                ResponseStatusException.class,
-                () -> interviewService.answer(
-                        authorization,
-                        started.id(),
-                        new InterviewAnswerRequest("I use unit tests with mocks.")
-                )
-        );
-        var retryable = interviewService.getSession(authorization, started.id());
-        assertEquals("PENDING", retryable.transcript().getLast().status());
-        assertNull(retryable.transcript().getLast().answer());
-
-        var progressed = interviewService.answer(
+        interviewService.answer(
                 authorization,
                 started.id(),
                 new InterviewAnswerRequest("I use unit tests with mocks.")
         );
+        var retryable = awaitSession(authorization, started.id(), current ->
+                "RETRY_REQUIRED".equals(current.transcript().getLast().status()));
+        assertEquals("I use unit tests with mocks.", retryable.transcript().getLast().answer());
+
+        interviewService.retryProgress(authorization, started.id());
+        var progressed = awaitSession(authorization, started.id(), current ->
+                current.transcript().size() == 3
+                        && "ANSWERED".equals(current.transcript().get(1).status()));
         assertEquals("How do you manage database transactions?", progressed.currentQuestion());
         assertEquals("ANSWERED", progressed.transcript().get(1).status());
         assertTrue(progressed.transcript().get(1).feedback().contains("relevant service-testing"));
-        verify(tutorModelService, times(4)).generateInterviewReply(anyList(), anyString());
+        verify(tutorModelService, times(4)).generateInterviewQuestionReply(anyList(), anyString());
+        verify(tutorModelService, times(2)).generateInterviewEvaluationReply(anyList(), anyString());
     }
 
     @Test
@@ -508,23 +565,33 @@ class InterviewProctoringIntegrationTests {
         resumeRepository.save(resume);
 
         CountDownLatch answerGenerationStarted = new CountDownLatch(1);
+        CountDownLatch evaluationGenerationStarted = new CountDownLatch(1);
         CountDownLatch releaseAnswerGeneration = new CountDownLatch(1);
-        when(tutorModelService.generateInterviewReply(anyList(), anyString()))
+        when(tutorModelService.generateInterviewQuestionReply(anyList(), anyString()))
                 .thenReturn("Describe a Java project.")
                 .thenAnswer(invocation -> {
                     answerGenerationStarted.countDown();
+                    if (!evaluationGenerationStarted.await(5, TimeUnit.SECONDS)) {
+                        throw new IllegalStateException("Question generation did not overlap answer evaluation.");
+                    }
                     if (!releaseAnswerGeneration.await(5, TimeUnit.SECONDS)) {
                         throw new IllegalStateException("Timed out waiting for the concurrency test.");
                     }
                     return "{\"decision\":\"CONTINUE\",\"difficulty\":\"INTERMEDIATE\","
-                            + "\"question\":\"How do you test a Java service?\","
-                            + "\"answerFeedback\":\"You explained a relevant project clearly.\"}";
+                            + "\"question\":\"How do you test a Java service?\"}";
+                });
+        when(tutorModelService.generateInterviewEvaluationReply(anyList(), anyString()))
+                .thenAnswer(invocation -> {
+                    evaluationGenerationStarted.countDown();
+                    return "You explained the project clearly.";
                 });
 
-        var started = interviewService.startSession(
+        var preparing = interviewService.startSession(
                 authorization,
                 new InterviewStartRequest("Java Developer", "TECHNICAL", "INTERMEDIATE")
         );
+        var started = awaitSession(authorization, preparing.id(), current ->
+                "IN_PROGRESS".equals(current.status()) && current.currentQuestion() != null);
         CompletableFuture<com.learningassistant.learning_assistant.dto.InterviewSessionResponse> firstRequest =
                 CompletableFuture.supplyAsync(() -> interviewService.answer(
                         authorization,
@@ -532,6 +599,7 @@ class InterviewProctoringIntegrationTests {
                         new InterviewAnswerRequest("I built a Spring service.")
                 ));
         assertTrue(answerGenerationStarted.await(5, TimeUnit.SECONDS));
+        assertTrue(evaluationGenerationStarted.await(5, TimeUnit.SECONDS));
         ResponseStatusException duplicate = assertThrows(
                 ResponseStatusException.class,
                 () -> interviewService.answer(
@@ -543,9 +611,41 @@ class InterviewProctoringIntegrationTests {
         assertEquals(HttpStatus.CONFLICT, duplicate.getStatusCode());
 
         releaseAnswerGeneration.countDown();
-        var completedRequest = firstRequest.get(5, TimeUnit.SECONDS);
+        var acceptedRequest = firstRequest.get(5, TimeUnit.SECONDS);
+        assertTrue("PROCESSING".equals(acceptedRequest.transcript().getFirst().status())
+                || "ANSWERED".equals(acceptedRequest.transcript().getFirst().status()));
+        releaseAnswerGeneration.countDown();
+        var completedRequest = awaitSession(authorization, started.id(), current ->
+                current.transcript().size() == 2
+                        && "ANSWERED".equals(current.transcript().getFirst().status()));
         assertEquals("How do you test a Java service?", completedRequest.currentQuestion());
-        verify(tutorModelService, times(2)).generateInterviewReply(anyList(), anyString());
+        verify(tutorModelService, times(2)).generateInterviewQuestionReply(anyList(), anyString());
+    }
+
+    @Test
+    void interruptedGenerationIsRecoveredWithTheSavedAnswerAvailableForRetry() {
+        User user = userRepository.save(new User(
+                "Interrupted generation learner",
+                "interrupted-" + UUID.randomUUID() + "@example.com",
+                "test-password"
+        ));
+        InterviewSession session = createSession(user);
+        java.time.LocalDateTime now = java.time.LocalDateTime.now();
+        session.setStartedAt(now.minusMinutes(1));
+        session.setExpiresAt(now.plusMinutes(4));
+        session.setLastHeartbeatAt(now);
+        InterviewSession.Turn turn = new InterviewSession.Turn("Describe a Java project.", "I built a Spring service.");
+        turn.setStatus("PROCESSING");
+        turn.setProcessingStartedAt(now.minusMinutes(10));
+        session.getTranscript().add(turn);
+        sessionRepository.saveAndFlush(session);
+        String authorization = "Bearer " + jwtService.generateToken(user.getEmail());
+
+        interviewService.expireInactiveSessions();
+
+        var recovered = interviewService.getSession(authorization, session.getId());
+        assertEquals("RETRY_REQUIRED", recovered.transcript().getFirst().status());
+        assertEquals("I built a Spring service.", recovered.transcript().getFirst().answer());
     }
 
     @Test
@@ -647,5 +747,22 @@ class InterviewProctoringIntegrationTests {
         session.setUser(user);
         session.setJobRole("Software Engineer");
         return sessionRepository.save(session);
+    }
+
+    private InterviewSessionResponse awaitSession(
+            String authorization,
+            Long sessionId,
+            Predicate<InterviewSessionResponse> condition
+    ) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(8);
+        InterviewSessionResponse current;
+        do {
+            current = interviewService.getSession(authorization, sessionId);
+            if (condition.test(current)) return current;
+            Thread.sleep(25);
+        } while (System.nanoTime() < deadline);
+        fail("Timed out waiting for interview session progress; last status was "
+                + current.status() + " / " + current.transcript().getLast().status());
+        return current;
     }
 }

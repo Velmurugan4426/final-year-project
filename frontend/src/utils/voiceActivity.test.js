@@ -41,6 +41,27 @@ test("sustained speech is detected and end-of-speech silence is reported once", 
     assert.equal(detector.update(0.004, 1_050).speechEnded, false);
 });
 
+test("voice sensitivity adjusts the detection threshold within a bounded range", () => {
+    const sensitive = createVoiceActivityDetector({
+        ...detectorOptions,
+        sensitivity: 2
+    }, 0);
+    const lessSensitive = createVoiceActivityDetector({
+        ...detectorOptions,
+        sensitivity: 0.5
+    }, 0);
+    for (let index = 0; index < 12; index += 1) {
+        sensitive.update(0.004, index * 50);
+        lessSensitive.update(0.004, index * 50);
+    }
+    for (let index = 0; index < 3; index += 1) {
+        sensitive.update(0.02, 600 + index * 50);
+        lessSensitive.update(0.02, 600 + index * 50);
+    }
+    assert.equal(sensitive.update(0.02, 750).speechDetected, true);
+    assert.equal(lessSensitive.update(0.02, 750).speechDetected, false);
+});
+
 test("audio RMS distinguishes silence from a clear voice-level signal", () => {
     assert.equal(calculateAudioRms(new Uint8Array(8).fill(128)), 0);
     assert.ok(calculateAudioRms(new Uint8Array(8).fill(160)) > 0.2);

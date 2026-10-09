@@ -15,6 +15,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TutorModelServiceProviderTests {
@@ -92,7 +93,57 @@ class TutorModelServiceProviderTests {
         assertFalse(requests.getFirst().startsWith("/gemini/"));
     }
 
+    @Test
+    void configuredPrimaryIsAutomaticallyEnabledAndQuestionModelIsConfigurable() {
+        TutorModelService service = service("groq", "openrouter", "openrouter", "interview-question-model");
+
+        String answer = service.generateInterviewQuestionReply(List.of(), "interview prompt");
+
+        assertEquals("OpenRouter response", answer);
+        assertEquals(2, requests.size());
+        assertTrue(requests.get(0).contains("\"model\":\"interview-question-model\""));
+        assertTrue(requests.get(1).contains("\"model\":\"openrouter/free\""));
+    }
+
+    @Test
+    void interviewEvaluationModelCanBeConfiguredSeparately() {
+        TutorModelService service = service(
+                "openrouter",
+                "openrouter,groq",
+                "groq",
+                "",
+                "interview-evaluation-model"
+        );
+
+        String answer = service.generateInterviewEvaluationReply(List.of(), "evaluation prompt");
+
+        assertEquals("OpenRouter response", answer);
+        assertTrue(requests.getFirst().contains("\"model\":\"interview-evaluation-model\""));
+    }
+
+    @Test
+    void invalidInterviewModelIdFailsFastAtStartup() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> service("groq", "groq", "", "model id with spaces")
+        );
+    }
+
     private TutorModelService service(String primary, String enabled, String fallbacks) {
+        return service(primary, enabled, fallbacks, "", "");
+    }
+
+    private TutorModelService service(String primary, String enabled, String fallbacks, String questionModel) {
+        return service(primary, enabled, fallbacks, questionModel, "");
+    }
+
+    private TutorModelService service(
+            String primary,
+            String enabled,
+            String fallbacks,
+            String questionModel,
+            String evaluationModel
+    ) {
         String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
         return new TutorModelService(
                 "gemini-test-key",
@@ -108,7 +159,9 @@ class TutorModelServiceProviderTests {
                 primary,
                 enabled,
                 fallbacks,
-                5
+                5,
+                questionModel,
+                evaluationModel
         );
     }
 }

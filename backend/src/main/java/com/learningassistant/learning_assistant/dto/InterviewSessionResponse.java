@@ -20,7 +20,8 @@ public record InterviewSessionResponse(
         LocalDateTime lastHeartbeatAt,
         long remainingSeconds,
         long durationSeconds,
-        LocalDateTime completedAt
+        LocalDateTime completedAt,
+        long revision
 ) {
     public record Turn(String question, String answer, String feedback, String status) {
     }

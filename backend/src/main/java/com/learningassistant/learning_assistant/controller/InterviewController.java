@@ -141,6 +141,14 @@ public class InterviewController {
         return interviewService.skip(authorization, sessionId);
     }
 
+    @PostMapping("/sessions/{sessionId}/retry")
+    public InterviewSessionResponse retryProgress(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @PathVariable Long sessionId
+    ) {
+        return interviewService.retryProgress(authorization, sessionId);
+    }
+
     @PostMapping(value = "/sessions/{sessionId}/transcription", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public InterviewTranscriptionResponse transcribe(
             @RequestHeader(value = "Authorization", required = false) String authorization,

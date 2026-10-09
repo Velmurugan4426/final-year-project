@@ -60,7 +60,15 @@ endpoints can optionally be overridden with `GROQ_API_URL`,
 `OPENROUTER_API_URL`, and `GEMINI_API_URL`.
 
 AI Interview uses the configured AI provider for resume-aware questions and
-end-of-session coaching. Set `AI_INTERVIEW_ADMIN_EMAIL` to the administrator
+end-of-session coaching. Per-task model overrides are available through
+`AI_INTERVIEW_QUESTION_MODEL` and `AI_INTERVIEW_EVALUATION_MODEL`; empty values
+use the configured model for the primary provider while fallbacks use their
+own provider-specific model. Model IDs for enabled providers are validated at
+startup. Answers are saved before AI generation starts, question and answer
+feedback run concurrently, and a failed or interrupted generation can be
+retried without resubmitting the answer. Stale generation is recoverable after
+`AI_INTERVIEW_GENERATION_TIMEOUT_MINUTES` (default 3).
+Set `AI_INTERVIEW_ADMIN_EMAIL` to the administrator
 account email; only that authenticated account can issue time-limited free
 grants, search accounts by name/email, revoke admin grants without removing
 paid access, review monitoring signals, or verify subscription payments.
@@ -122,7 +130,12 @@ Groq Whisper transcription service (`GROQ_TRANSCRIPTION_MODEL` defaults to
 `whisper-large-v3-turbo`). Choose the answer language before recording. If the
 service is unavailable, browser speech recognition is used as a fallback and
 the UI identifies that fallback. The candidate can review the transcript
-before submission. Audio is not persisted by this application, but audio sent
+before submission. Voice activity detection supports
+`VITE_INTERVIEW_NO_SPEECH_TIMEOUT_MS` (default 15000 ms),
+`VITE_INTERVIEW_END_SILENCE_MS` (default 1400 ms), and
+`VITE_INTERVIEW_VOICE_SENSITIVITY` (default 1, range 0.5-2). No-speech auto-skip
+is off by default and can be opted into with
+`VITE_INTERVIEW_AUTO_SKIP_NO_SPEECH=true`. Audio is not persisted by this application, but audio sent
 to Groq or handled by browser speech recognition is subject to those providers'
 privacy policies. This is turn-based interaction, not a streaming
 conversational audio model. During an interview, on-device TensorFlow.js models check for the
