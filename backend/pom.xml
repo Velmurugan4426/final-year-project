@@ -76,6 +76,17 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- Versioned schema migrations run before Hibernate validation/update. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-flyway</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
 
         <!-- ======================================== -->
         <!-- SECURITY -->

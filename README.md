@@ -82,6 +82,15 @@ survive a redeploy or instance replacement. On startup, the backend adds the
 resume storage metadata column and updates the legacy file column to allow
 new file-backed records; no manual Neon SQL change is required.
 
+PostgreSQL schema changes are applied by Flyway before Hibernate starts. On an
+existing Neon database without Flyway history, Flyway records a baseline and
+runs the versioned interview-turn status migration. It preserves existing
+non-null turn statuses, infers NULL statuses from saved answers and the
+explicit skipped-answer marker, and sets `PENDING` as the default with a
+`NOT NULL` constraint. Deploy the backend with its existing Neon
+`DB_URL`, `DB_USERNAME`, and `DB_PASSWORD`; do not use Hibernate update alone
+as a substitute for this data migration.
+
 Completed interview
 feedback provides a topic-by-topic knowledge review with a rating, evidence
 from the candidate's own answers, and actionable next steps. It only assesses

@@ -243,7 +243,7 @@ public class InterviewSession {
         @Column(name = "answer_feedback", columnDefinition = "text")
         private String feedback;
 
-        @Column(name = "turn_status", nullable = false, length = 20)
+        @Column(name = "turn_status", nullable = false, length = 20, columnDefinition = "varchar(20) default 'PENDING'")
         private String status = "PENDING";
 
         protected Turn() {
