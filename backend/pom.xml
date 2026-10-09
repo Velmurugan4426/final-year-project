@@ -26,16 +26,42 @@
 
     <dependencies>
 
+        <!-- ======================================== -->
         <!-- REST API -->
+        <!-- ======================================== -->
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-webmvc</artifactId>
         </dependency>
 
+        <!-- JSON -->
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
         </dependency>
+
+
+        <!-- ======================================== -->
+        <!-- PDF RESUME PARSING -->
+        <!-- ======================================== -->
+
+        <dependency>
+            <groupId>org.apache.pdfbox</groupId>
+            <artifactId>pdfbox</artifactId>
+            <version>3.0.6</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.pdfbox</groupId>
+            <artifactId>pdfbox-io</artifactId>
+            <version>3.0.6</version>
+        </dependency>
+
+
+        <!-- ======================================== -->
+        <!-- DATABASE -->
+        <!-- ======================================== -->
 
         <!-- Spring Data JPA + Hibernate -->
         <dependency>
@@ -50,20 +76,27 @@
             <scope>runtime</scope>
         </dependency>
 
-        <!-- Spring Security -->
+
+        <!-- ======================================== -->
+        <!-- SECURITY -->
+        <!-- ======================================== -->
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-security</artifactId>
         </dependency>
 
-        <!-- JWT API -->
+
+        <!-- ======================================== -->
+        <!-- JWT -->
+        <!-- ======================================== -->
+
         <dependency>
             <groupId>io.jsonwebtoken</groupId>
             <artifactId>jjwt-api</artifactId>
             <version>0.12.6</version>
         </dependency>
 
-        <!-- JWT Implementation -->
         <dependency>
             <groupId>io.jsonwebtoken</groupId>
             <artifactId>jjwt-impl</artifactId>
@@ -71,7 +104,6 @@
             <scope>runtime</scope>
         </dependency>
 
-        <!-- JWT Jackson JSON Support -->
         <dependency>
             <groupId>io.jsonwebtoken</groupId>
             <artifactId>jjwt-jackson</artifactId>
@@ -79,7 +111,11 @@
             <scope>runtime</scope>
         </dependency>
 
-        <!-- Development Tools -->
+
+        <!-- ======================================== -->
+        <!-- DEVELOPMENT -->
+        <!-- ======================================== -->
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-devtools</artifactId>
@@ -87,7 +123,11 @@
             <optional>true</optional>
         </dependency>
 
-        <!-- Testing -->
+
+        <!-- ======================================== -->
+        <!-- TESTING -->
+        <!-- ======================================== -->
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-webmvc-test</artifactId>
@@ -101,6 +141,11 @@
         </dependency>
 
     </dependencies>
+
+
+    <!-- ======================================== -->
+    <!-- BUILD -->
+    <!-- ======================================== -->
 
     <build>
         <plugins>

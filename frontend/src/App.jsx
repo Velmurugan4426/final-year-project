@@ -17,6 +17,7 @@ import Quiz from "./pages/Quiz";
 import CodingAssistant from "./pages/CodingAssistant";
 import Analytics from "./pages/Analytics";
 import Profile from "./pages/Profile";
+import AiInterview from "./pages/AiInterview";
 
 import ProtectedRoute from "./components/ProtectedRoute";
 
@@ -94,6 +95,11 @@ function App() {
                         <Route
                             path="/analytics"
                             element={<Analytics />}
+                        />
+
+                        <Route
+                            path="/ai-interview"
+                            element={<AiInterview />}
                         />
 
                         {/* User Profile */}

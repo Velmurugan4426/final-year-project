@@ -3,9 +3,10 @@ package com.learningassistant.learning_assistant.controller;
 import com.learningassistant.learning_assistant.dto.DashboardResponse;
 import com.learningassistant.learning_assistant.service.DashboardService;
 
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/dashboard")
@@ -30,22 +31,9 @@ public class DashboardController {
     // =========================================================
 
     @GetMapping
-    public ResponseEntity<?> getDashboard(
-            @RequestParam String email
+    public DashboardResponse getDashboard(
+            @RequestHeader(value = "Authorization", required = false) String authorization
     ) {
-
-        try {
-
-            DashboardResponse dashboard =
-                    dashboardService.getDashboard(email);
-
-            return ResponseEntity.ok(dashboard);
-
-        } catch (RuntimeException exception) {
-
-            return ResponseEntity
-                    .status(HttpStatus.NOT_FOUND)
-                    .body(exception.getMessage());
-        }
+        return dashboardService.getDashboard(authorization);
     }
 }

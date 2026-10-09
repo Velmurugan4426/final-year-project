@@ -7,6 +7,7 @@ import {
     ClipboardCheck,
     Code2,
     BarChart3,
+    Video,
     UserRound
 } from "lucide-react";
 
@@ -40,6 +41,11 @@ const navigationItems = [
         name: "Analytics",
         path: "/analytics",
         icon: BarChart3
+    },
+    {
+        name: "AI Interview",
+        path: "/ai-interview",
+        icon: Video
     },
     {
         name: "Profile",

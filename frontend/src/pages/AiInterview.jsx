@@ -1,0 +1,1753 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+    AlertTriangle,
+    ArrowRight,
+    BadgeCheck,
+    Check,
+    CheckCircle2,
+    Clock3,
+    FileText,
+    LockKeyhole,
+    LoaderCircle,
+    Mic,
+    MicOff,
+    ShieldCheck,
+    Sparkles,
+    Trash2,
+    Upload,
+    Video,
+    VideoOff,
+    Volume2,
+    X
+} from "lucide-react";
+import "./AiInterview.css";
+
+const API_BASE = import.meta.env.VITE_API_URL || "";
+async function interviewRequest(path, options = {}) {
+    const token = localStorage.getItem("token");
+    if (!token) {
+        throw new Error("Please sign in to use AI Interview.");
+    }
+
+    let response;
+    try {
+        response = await fetch(`${API_BASE}${path}`, {
+            ...options,
+            headers: {
+                Authorization: `Bearer ${token}`,
+                ...(options.body && !(options.body instanceof FormData)
+                    ? { "Content-Type": "application/json" }
+                    : {}),
+                ...options.headers
+            }
+        });
+    } catch (error) {
+        if (error.name === "AbortError") throw error;
+        throw new Error("Could not connect to the interview service. Please check your connection.");
+    }
+
+    if (!response.ok) {
+        let message = `Request failed (${response.status}).`;
+        try {
+            const data = await response.json();
+            message = data.message || data.error || message;
+        } catch {
+            // The server did not return a JSON error body.
+        }
+        throw new Error(message);
+    }
+
+    if (response.status === 204) return null;
+    return response.json();
+}
+
+function formatDate(value) {
+    if (!value) return "Date unavailable";
+    const date = new Date(value);
+    return Number.isNaN(date.getTime())
+        ? "Date unavailable"
+        : date.toLocaleString();
+}
+
+function statusLabel(status) {
+    if (status === "TERMINATED") return "Terminated";
+    if (status === "TIME_EXPIRED") return "Time expired";
+    if (status === "COMPLETED") return "Completed";
+    return "In progress";
+}
+
+function isInterviewActive(status) {
+    return status === "IN_PROGRESS" || status === "ACTIVE";
+}
+
+function modeLabel(mode) {
+    if (mode === "TECHNICAL") return "Technical Interview";
+    if (mode === "BEHAVIORAL") return "Behavioral / HR Interview";
+    return "Full Interview";
+}
+
+function formatRemaining(seconds) {
+    const safeSeconds = Math.max(0, seconds || 0);
+    const minutes = Math.floor(safeSeconds / 60);
+    const remainder = safeSeconds % 60;
+    return `${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
+}
+
+function soundsLikeFemaleVoice(voice) {
+    return /\b(female|woman|zira|samantha|victoria|karen|moira|tessa|fiona|serena|jenny|aria|ava|allison|susan|hazel|siri)\b/i
+        .test(voice.name);
+}
+
+function parseAssessment(feedback) {
+    if (!feedback) return null;
+    try {
+        const assessment = JSON.parse(feedback);
+        if (typeof assessment.summary !== "string"
+                || !Array.isArray(assessment.topics)
+                || !Array.isArray(assessment.nextSteps)) return null;
+        return assessment;
+    } catch {
+        return null;
+    }
+}
+
+function monitoringWarning(eventType) {
+    const descriptions = {
+        PHONE_DETECTED: "A phone was detected. The interview has been terminated.",
+        TAB_HIDDEN: "The interview tab was hidden. Return to the interview and keep it visible.",
+        FULLSCREEN_EXIT: "Fullscreen was exited. Return to fullscreen to continue.",
+        CAMERA_INTERRUPTED: "Your camera was interrupted. Reconnect it to continue.",
+        MICROPHONE_INTERRUPTED: "Your microphone was interrupted. Reconnect it to continue.",
+        FACE_NOT_VISIBLE: "Your face was not visible for several seconds. The interview has been terminated.",
+        MULTIPLE_PEOPLE_DETECTED: "More than one person appears in the camera view. Continue the interview alone."
+    };
+    return descriptions[eventType] || "A monitoring event was recorded.";
+}
+
+function loadRazorpayScript() {
+    if (window.Razorpay) return Promise.resolve(true);
+    return new Promise((resolve) => {
+        const existingScript = document.querySelector(
+            'script[src="https://checkout.razorpay.com/v1/checkout.js"]'
+        );
+        if (existingScript) {
+            existingScript.addEventListener("load", () => resolve(Boolean(window.Razorpay)), { once: true });
+            existingScript.addEventListener("error", () => resolve(false), { once: true });
+            return;
+        }
+        const script = document.createElement("script");
+        script.src = "https://checkout.razorpay.com/v1/checkout.js";
+        script.async = true;
+        script.onload = () => resolve(Boolean(window.Razorpay));
+        script.onerror = () => resolve(false);
+        document.body.appendChild(script);
+    });
+}
+
+export default function AiInterview() {
+    const [access, setAccess] = useState(null);
+    const [sessions, setSessions] = useState([]);
+    const [session, setSession] = useState(null);
+    const [reports, setReports] = useState([]);
+    const [userResults, setUserResults] = useState([]);
+    const [selectedUserId, setSelectedUserId] = useState("");
+    const [searchQuery, setSearchQuery] = useState("");
+    const [grantDays, setGrantDays] = useState("30");
+    const [customGrantDays, setCustomGrantDays] = useState("60");
+    const [jobRole, setJobRole] = useState("");
+    const [interviewMode, setInterviewMode] = useState("FULL");
+    const [difficulty, setDifficulty] = useState("INTERMEDIATE");
+    const [resumeFile, setResumeFile] = useState(null);
+    const [stream, setStream] = useState(null);
+    const [cameraOn, setCameraOn] = useState(false);
+    const [microphoneOn, setMicrophoneOn] = useState(false);
+    const [consent, setConsent] = useState(false);
+    const [answer, setAnswer] = useState("");
+    const [recordingVoice, setRecordingVoice] = useState(false);
+    const [questionSpeaking, setQuestionSpeaking] = useState(false);
+    const [availableVoices, setAvailableVoices] = useState([]);
+    const [selectedVoiceURI, setSelectedVoiceURI] = useState("");
+    const [transcriptionLanguage, setTranscriptionLanguage] = useState("en");
+    const [busy, setBusy] = useState(false);
+    const [loading, setLoading] = useState(true);
+    const [alert, setAlert] = useState("");
+    const [monitoringMessage, setMonitoringMessage] = useState("");
+    const [remainingSeconds, setRemainingSeconds] = useState(0);
+    const [connectionStatus, setConnectionStatus] = useState("Checking");
+
+    const videoRef = useRef(null);
+    const streamRef = useRef(null);
+    const recognitionRef = useRef(null);
+    const mediaRecorderRef = useRef(null);
+    const audioChunksRef = useRef([]);
+    const voiceRecognitionErrorRef = useRef("");
+    const answerRef = useRef("");
+    const voiceFinalTranscriptRef = useRef("");
+    const voiceCaptureActiveRef = useRef(false);
+    const voiceRestartTimeoutRef = useRef(null);
+    const voiceStopResolveRef = useRef(null);
+    const voiceStopTimeoutRef = useRef(null);
+    const discardRecordingRef = useRef(false);
+    const speechRef = useRef(null);
+    const activeMonitoringRef = useRef(false);
+    const terminationHandledRef = useRef(false);
+    const wasFullscreenRef = useRef(false);
+    const phoneEventSentRef = useRef(false);
+    const detectorRef = useRef(null);
+    const faceDetectorRef = useRef(null);
+    const detectionIntervalRef = useRef(null);
+    const detectionPendingRef = useRef(false);
+    const faceMissingFramesRef = useRef(0);
+    const detectionFailureReportedRef = useRef(false);
+    const multiplePersonFramesRef = useRef(0);
+    const faceWarningSentRef = useRef(false);
+    const multiplePersonWarningSentRef = useRef(false);
+    const sessionId = session?.id;
+    const sessionStatus = session?.status;
+    const currentQuestion = session?.currentQuestion;
+
+    const updateHistory = useCallback((updatedSession) => {
+        if (!updatedSession?.id) return;
+        setSessions((current) => {
+            const withoutUpdated = current.filter((item) => item.id !== updatedSession.id);
+            return [updatedSession, ...withoutUpdated].slice(0, 20);
+        });
+    }, []);
+
+    const speakQuestion = useCallback((question) => {
+        if (!question || !("speechSynthesis" in window)) {
+            setQuestionSpeaking(false);
+            return;
+        }
+        const safeQuestion = question.replace(/\s+/g, " ").trim();
+        if (!safeQuestion) return;
+
+        const synth = window.speechSynthesis;
+        synth.cancel();
+        if (synth.paused) synth.resume();
+
+        const utterance = new SpeechSynthesisUtterance(safeQuestion);
+        const preferredVoice = availableVoices.find((voice) => voice.voiceURI === selectedVoiceURI)
+            || availableVoices.find((voice) => soundsLikeFemaleVoice(voice) && voice.lang.startsWith("en"))
+            || availableVoices.find((voice) => voice.lang.startsWith("en"))
+            || availableVoices[0];
+        utterance.lang = preferredVoice?.lang || "en-US";
+        utterance.rate = 1;
+        utterance.pitch = 1;
+        utterance.volume = 1;
+
+        if (preferredVoice) {
+            utterance.voice = preferredVoice;
+        }
+
+        utterance.onstart = () => {
+            if (speechRef.current === utterance) setQuestionSpeaking(true);
+        };
+        utterance.onend = () => {
+            if (speechRef.current === utterance) {
+                speechRef.current = null;
+                setQuestionSpeaking(false);
+            }
+        };
+        utterance.onerror = (event) => {
+            if (speechRef.current === utterance) {
+                speechRef.current = null;
+                setQuestionSpeaking(false);
+                setAlert(`The browser could not read the question aloud: ${event.error || "speech synthesis failed"}.`);
+            }
+        };
+        setQuestionSpeaking(true);
+        speechRef.current = utterance;
+        try {
+            synth.speak(utterance);
+        } catch (error) {
+            setQuestionSpeaking(false);
+            setAlert(`The question could not be read aloud: ${error.message}`);
+        }
+    }, [availableVoices, selectedVoiceURI]);
+
+    const stopDevices = useCallback(() => {
+        const currentStream = streamRef.current;
+        if (currentStream) {
+            currentStream.getTracks().forEach((track) => track.stop());
+        }
+        streamRef.current = null;
+        setStream(null);
+        setCameraOn(false);
+        setMicrophoneOn(false);
+        if (videoRef.current) {
+            videoRef.current.srcObject = null;
+        }
+    }, []);
+
+    const exitFullscreen = useCallback(async () => {
+        wasFullscreenRef.current = false;
+        if (document.fullscreenElement && document.exitFullscreen) {
+            try {
+                await document.exitFullscreen();
+            } catch {
+                setAlert("The browser could not exit fullscreen automatically. Please exit fullscreen manually.");
+            }
+        }
+    }, []);
+
+    const stopInterviewMedia = useCallback(() => {
+        activeMonitoringRef.current = false;
+        voiceCaptureActiveRef.current = false;
+        discardRecordingRef.current = true;
+        window.clearTimeout(voiceRestartTimeoutRef.current);
+        if (mediaRecorderRef.current?.state === "recording") {
+            mediaRecorderRef.current.stop();
+        }
+        stopDevices();
+        void exitFullscreen();
+        if (recognitionRef.current) {
+            window.clearTimeout(voiceRestartTimeoutRef.current);
+            recognitionRef.current.stop();
+            recognitionRef.current = null;
+        }
+        if ("speechSynthesis" in window) {
+            window.speechSynthesis.cancel();
+        }
+        setQuestionSpeaking(false);
+        setRecordingVoice(false);
+    }, [exitFullscreen, stopDevices]);
+
+    const applySessionResponse = useCallback((updatedSession) => {
+        if (!updatedSession) return;
+        setSession((current) => {
+            if (current && !isInterviewActive(current.status) && isInterviewActive(updatedSession.status)) {
+                return current;
+            }
+            return updatedSession;
+        });
+        setRemainingSeconds(updatedSession.remainingSeconds || 0);
+        updateHistory(updatedSession);
+
+        if (!isInterviewActive(updatedSession.status)) {
+            terminationHandledRef.current = updatedSession.status === "TERMINATED";
+            stopInterviewMedia();
+            setMonitoringMessage("");
+            answerRef.current = "";
+            setAnswer("");
+        }
+    }, [stopInterviewMedia, updateHistory]);
+
+    const loadPageData = useCallback(async () => {
+        setLoading(true);
+        setAlert("");
+        try {
+            const [accessResult, sessionResult] = await Promise.all([
+                interviewRequest("/api/ai-interview/access"),
+                interviewRequest("/api/ai-interview/sessions")
+            ]);
+            setAccess(accessResult);
+            setSessions(sessionResult);
+            const resumableSession = sessionResult.find((item) => isInterviewActive(item.status));
+            if (resumableSession) {
+                setSession(resumableSession);
+                setRemainingSeconds(resumableSession.remainingSeconds);
+            }
+            if (accessResult.isAdmin) {
+                const reportResult = await interviewRequest("/api/ai-interview/admin/reports");
+                setReports(reportResult);
+            }
+        } catch (error) {
+            setAlert(error.message);
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        void loadPageData();
+    }, [loadPageData]);
+
+    useEffect(() => {
+        if (!("speechSynthesis" in window)) return undefined;
+
+        const refreshVoices = () => {
+            const voices = window.speechSynthesis.getVoices();
+            setAvailableVoices(voices);
+            setSelectedVoiceURI((current) => (
+                voices.some((voice) => voice.voiceURI === current)
+                    ? current
+                    : (voices.find((voice) => soundsLikeFemaleVoice(voice) && voice.lang.startsWith("en"))
+                        || voices.find((voice) => voice.lang.startsWith("en"))
+                        || voices[0])?.voiceURI || ""
+            ));
+        };
+
+        refreshVoices();
+        window.speechSynthesis.addEventListener("voiceschanged", refreshVoices);
+        return () => window.speechSynthesis.removeEventListener("voiceschanged", refreshVoices);
+    }, []);
+
+    useEffect(() => {
+        if (videoRef.current && stream) {
+            videoRef.current.srcObject = stream;
+            void videoRef.current.play().catch(() => {});
+        }
+    }, [stream, session?.id]);
+
+    useEffect(() => {
+        if (!sessionId || !isInterviewActive(sessionStatus) || !currentQuestion) return;
+        speakQuestion(currentQuestion);
+    }, [currentQuestion, sessionId, sessionStatus, speakQuestion]);
+
+    useEffect(() => {
+        setRemainingSeconds(session?.remainingSeconds || 0);
+    }, [session?.id, session?.remainingSeconds]);
+
+    useEffect(() => {
+        if (!sessionId || !isInterviewActive(sessionStatus)) return undefined;
+
+        let pending = false;
+        const sendHeartbeat = async () => {
+            if (pending) return;
+            pending = true;
+            try {
+                const result = await interviewRequest(
+                    `/api/ai-interview/sessions/${sessionId}/heartbeat`,
+                    { method: "POST" }
+                );
+                setConnectionStatus("Connected");
+                applySessionResponse(result);
+            } catch (error) {
+                setConnectionStatus("Reconnecting");
+                setAlert(error.message);
+            } finally {
+                pending = false;
+            }
+        };
+
+        void sendHeartbeat();
+        const interval = window.setInterval(sendHeartbeat, 15_000);
+        return () => window.clearInterval(interval);
+    }, [applySessionResponse, sessionId, sessionStatus]);
+
+    useEffect(() => {
+        if (!sessionId || !isInterviewActive(sessionStatus) || !session?.expiresAt) return undefined;
+
+        let expiryCheckStarted = false;
+        const updateClock = () => {
+            const seconds = Math.max(0, Math.ceil((new Date(session.expiresAt).getTime() - Date.now()) / 1000));
+            setRemainingSeconds(seconds);
+            if (seconds === 0 && !expiryCheckStarted) {
+                expiryCheckStarted = true;
+                setAlert("The interview time has ended. Confirming the session status with the server.");
+                interviewRequest(`/api/ai-interview/sessions/${sessionId}/heartbeat`, { method: "POST" })
+                    .then(applySessionResponse)
+                    .catch((error) => setAlert(error.message));
+            }
+        };
+        updateClock();
+        const interval = window.setInterval(updateClock, 1000);
+        return () => window.clearInterval(interval);
+    }, [applySessionResponse, session?.expiresAt, sessionId, sessionStatus]);
+
+    useEffect(() => {
+        const onOnline = () => setConnectionStatus("Connected");
+        const onOffline = () => setConnectionStatus("Offline");
+        setConnectionStatus(navigator.onLine ? "Connected" : "Offline");
+        window.addEventListener("online", onOnline);
+        window.addEventListener("offline", onOffline);
+        return () => {
+            window.removeEventListener("online", onOnline);
+            window.removeEventListener("offline", onOffline);
+        };
+    }, []);
+
+    useEffect(() => () => {
+        activeMonitoringRef.current = false;
+        if (detectionIntervalRef.current) {
+            window.clearInterval(detectionIntervalRef.current);
+        }
+        if (streamRef.current) {
+            streamRef.current.getTracks().forEach((track) => track.stop());
+        }
+        if (recognitionRef.current) {
+            voiceCaptureActiveRef.current = false;
+            window.clearTimeout(voiceRestartTimeoutRef.current);
+            recognitionRef.current.stop();
+        }
+        if (mediaRecorderRef.current?.state === "recording") {
+            discardRecordingRef.current = true;
+            mediaRecorderRef.current.stop();
+        }
+        if ("speechSynthesis" in window) {
+            window.speechSynthesis.cancel();
+        }
+    }, []);
+
+    const enableDevices = useCallback(async () => {
+        if (!navigator.mediaDevices?.getUserMedia) {
+            setAlert("This browser does not support camera and microphone access.");
+            return null;
+        }
+        try {
+            const newStream = await navigator.mediaDevices.getUserMedia({
+                video: true,
+                audio: true
+            });
+            streamRef.current = newStream;
+            setStream(newStream);
+            setCameraOn(newStream.getVideoTracks().some((track) => track.readyState === "live"));
+            setMicrophoneOn(newStream.getAudioTracks().some((track) => track.readyState === "live"));
+            setAlert("");
+            return newStream;
+        } catch (error) {
+            const message = error.name === "NotAllowedError"
+                ? "Allow camera and microphone access in your browser settings, then try again."
+                : "The camera and microphone could not be started. Check that they are connected and not in use.";
+            setAlert(message);
+            return null;
+        }
+    }, []);
+
+    const recordMonitoringEvent = useCallback(async (eventType, details) => {
+        if (!activeMonitoringRef.current || terminationHandledRef.current || !sessionId) return;
+        try {
+            const result = await interviewRequest(
+                `/api/ai-interview/sessions/${sessionId}/events`,
+                {
+                    method: "POST",
+                    body: JSON.stringify({ eventType, details })
+                }
+            );
+            applySessionResponse(result);
+            if (result.status === "TERMINATED") {
+                setMonitoringMessage("");
+            } else {
+                setMonitoringMessage(monitoringWarning(eventType));
+            }
+        } catch (error) {
+            setAlert(error.message);
+        }
+    }, [applySessionResponse, sessionId]);
+
+    useEffect(() => {
+        if (!sessionId || !isInterviewActive(sessionStatus) || !stream) return undefined;
+
+        activeMonitoringRef.current = true;
+        terminationHandledRef.current = false;
+
+        const onVisibilityChange = () => {
+            if (document.hidden) {
+                void recordMonitoringEvent("TAB_HIDDEN", "The interview tab was hidden.");
+            }
+        };
+        const onFullscreenChange = () => {
+            if (activeMonitoringRef.current && wasFullscreenRef.current && !document.fullscreenElement) {
+                wasFullscreenRef.current = false;
+                void recordMonitoringEvent("FULLSCREEN_EXIT", "Fullscreen was exited.");
+            } else if (document.fullscreenElement) {
+                wasFullscreenRef.current = true;
+            }
+        };
+        const onVideoEnded = () => {
+            setCameraOn(false);
+            void recordMonitoringEvent("CAMERA_INTERRUPTED", "The camera stream ended.");
+        };
+        const onAudioEnded = () => {
+            setMicrophoneOn(false);
+            void recordMonitoringEvent("MICROPHONE_INTERRUPTED", "The microphone stream ended.");
+        };
+
+        document.addEventListener("visibilitychange", onVisibilityChange);
+        document.addEventListener("fullscreenchange", onFullscreenChange);
+        stream.getVideoTracks().forEach((track) => track.addEventListener("ended", onVideoEnded));
+        stream.getAudioTracks().forEach((track) => track.addEventListener("ended", onAudioEnded));
+
+        return () => {
+            activeMonitoringRef.current = false;
+            document.removeEventListener("visibilitychange", onVisibilityChange);
+            document.removeEventListener("fullscreenchange", onFullscreenChange);
+            stream.getVideoTracks().forEach((track) => track.removeEventListener("ended", onVideoEnded));
+            stream.getAudioTracks().forEach((track) => track.removeEventListener("ended", onAudioEnded));
+        };
+    }, [recordMonitoringEvent, sessionId, sessionStatus, stream]);
+
+    useEffect(() => {
+        if (!sessionId || !isInterviewActive(sessionStatus) || !stream || !videoRef.current) {
+            if (detectionIntervalRef.current) {
+                window.clearInterval(detectionIntervalRef.current);
+                detectionIntervalRef.current = null;
+            }
+            return undefined;
+        }
+
+        let cancelled = false;
+        const startPhoneDetection = async () => {
+            try {
+                const tf = await import("@tensorflow/tfjs-core");
+                await import("@tensorflow/tfjs-backend-webgl");
+                const webglReady = await tf.setBackend("webgl");
+                if (!webglReady) {
+                    await import("@tensorflow/tfjs-backend-cpu");
+                    await tf.setBackend("cpu");
+                }
+                await tf.ready();
+                const cocoSsd = await import("@tensorflow-models/coco-ssd");
+                detectorRef.current = await cocoSsd.load();
+                const blazeface = await import("@tensorflow-models/blazeface");
+                faceDetectorRef.current = await blazeface.load();
+                if (cancelled || !videoRef.current) return;
+
+                detectionIntervalRef.current = window.setInterval(async () => {
+                    const video = videoRef.current;
+                    if (!video || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA
+                            || detectionPendingRef.current || !activeMonitoringRef.current) return;
+                    detectionPendingRef.current = true;
+                    try {
+                        const predictions = await detectorRef.current.detect(video);
+                        const phone = predictions.find(
+                            (prediction) => prediction.class === "cell phone" && prediction.score >= 0.55
+                        );
+                        const people = predictions.filter(
+                            (prediction) => prediction.class === "person" && prediction.score >= 0.65
+                        );
+                        const faces = await faceDetectorRef.current.estimateFaces(video, false, false);
+                        if (phone && !phoneEventSentRef.current) {
+                            phoneEventSentRef.current = true;
+                            void recordMonitoringEvent(
+                                "PHONE_DETECTED",
+                                `On-device camera model detected a phone (${Math.round(phone.score * 100)}% confidence).`
+                            );
+                        }
+                        if (faces.length === 0) {
+                            faceMissingFramesRef.current += 1;
+                            if (faceMissingFramesRef.current >= 5 && !faceWarningSentRef.current) {
+                                faceWarningSentRef.current = true;
+                                void recordMonitoringEvent(
+                                    "FACE_NOT_VISIBLE",
+                                    "On-device face detection could not find a face across consecutive camera frames."
+                                );
+                                setMonitoringMessage(monitoringWarning("FACE_NOT_VISIBLE"));
+                            }
+                        } else {
+                            faceMissingFramesRef.current = 0;
+                            faceWarningSentRef.current = false;
+                        }
+                        if (people.length > 1) {
+                            multiplePersonFramesRef.current += 1;
+                            if (multiplePersonFramesRef.current >= 2 && !multiplePersonWarningSentRef.current) {
+                                multiplePersonWarningSentRef.current = true;
+                                void recordMonitoringEvent(
+                                    "MULTIPLE_PEOPLE_DETECTED",
+                                    "On-device object detection found more than one person in consecutive camera frames."
+                                );
+                                setMonitoringMessage(monitoringWarning("MULTIPLE_PEOPLE_DETECTED"));
+                            }
+                        } else {
+                            multiplePersonFramesRef.current = 0;
+                            multiplePersonWarningSentRef.current = false;
+                        }
+                    } catch (error) {
+                        if (!detectionFailureReportedRef.current) {
+                            detectionFailureReportedRef.current = true;
+                            setAlert(`Camera analysis encountered an error and will retry: ${error.message}`);
+                        }
+                    } finally {
+                        detectionPendingRef.current = false;
+                    }
+                }, 1500);
+            } catch (error) {
+                if (!cancelled) {
+                    setAlert(`Phone detection could not be started: ${error.message}`);
+                }
+            }
+        };
+
+        phoneEventSentRef.current = false;
+        faceMissingFramesRef.current = 0;
+        detectionFailureReportedRef.current = false;
+        multiplePersonFramesRef.current = 0;
+        faceWarningSentRef.current = false;
+        multiplePersonWarningSentRef.current = false;
+        void startPhoneDetection();
+        return () => {
+            cancelled = true;
+            if (detectionIntervalRef.current) {
+                window.clearInterval(detectionIntervalRef.current);
+                detectionIntervalRef.current = null;
+            }
+            detectorRef.current = null;
+            faceDetectorRef.current = null;
+        };
+    }, [recordMonitoringEvent, sessionId, sessionStatus, stream]);
+
+    const requestFullscreen = useCallback(async () => {
+        if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
+            try {
+                await document.documentElement.requestFullscreen();
+                wasFullscreenRef.current = true;
+            } catch {
+                wasFullscreenRef.current = false;
+                setAlert("Fullscreen could not be enabled. Your interview is active; please enable fullscreen to continue.");
+            }
+        } else {
+            wasFullscreenRef.current = Boolean(document.fullscreenElement);
+        }
+    }, []);
+
+    const startInterview = useCallback(async () => {
+        if (!window.MediaRecorder) {
+            setAlert("This browser cannot record spoken answers. Use the latest Chrome or Edge.");
+            return;
+        }
+        if (!("speechSynthesis" in window)) {
+            setAlert("This browser cannot read interview questions aloud. Use the latest Chrome or Edge to continue.");
+            return;
+        }
+        if (!access?.hasAccess) {
+            setAlert("An active subscription or administrator grant is required to start an interview.");
+            return;
+        }
+        if (!access.resumeFileName) {
+            setAlert("Upload your PDF resume before starting an interview.");
+            return;
+        }
+        if (!jobRole.trim()) {
+            setAlert("Enter the job role you are interviewing for.");
+            return;
+        }
+        if (!consent) {
+            setAlert("Confirm the interview monitoring consent before starting.");
+            return;
+        }
+
+        setBusy(true);
+        setAlert("");
+        const media = streamRef.current || await enableDevices();
+        if (!media || !media.getVideoTracks().some((track) => track.readyState === "live")
+                || !media.getAudioTracks().some((track) => track.readyState === "live")) {
+            setBusy(false);
+            setAlert("A working camera and microphone are required to start the interview.");
+            return;
+        }
+        try {
+            const result = await interviewRequest("/api/ai-interview/sessions", {
+                method: "POST",
+                body: JSON.stringify({
+                    jobRole: jobRole.trim(),
+                    interviewMode,
+                    difficulty
+                })
+            });
+            setSession(result);
+            updateHistory(result);
+            setRemainingSeconds(result.remainingSeconds || 0);
+            terminationHandledRef.current = false;
+            activeMonitoringRef.current = true;
+            await requestFullscreen();
+        } catch (error) {
+            setAlert(error.message);
+        } finally {
+            setBusy(false);
+        }
+    }, [access, consent, difficulty, enableDevices, interviewMode, jobRole, requestFullscreen, updateHistory]);
+
+    const continueInterview = useCallback(async () => {
+        if (!session || !isInterviewActive(session.status)) return;
+        setBusy(true);
+        stopDevices();
+        const media = await enableDevices();
+        if (media?.getVideoTracks().some((track) => track.readyState === "live")
+                && media?.getAudioTracks().some((track) => track.readyState === "live")) {
+            activeMonitoringRef.current = true;
+            terminationHandledRef.current = false;
+            await requestFullscreen();
+        } else {
+            setAlert("A working camera and microphone are required to continue the interview.");
+        }
+        setBusy(false);
+    }, [enableDevices, requestFullscreen, session, stopDevices]);
+
+    const submitAnswer = useCallback(async (event) => {
+        event.preventDefault();
+        if (!session || !isInterviewActive(session.status) || remainingSeconds <= 0 || !answerRef.current.trim()) return;
+        setBusy(true);
+        setAlert("");
+        voiceCaptureActiveRef.current = false;
+        window.clearTimeout(voiceRestartTimeoutRef.current);
+        const activeRecognition = recognitionRef.current;
+        if (activeRecognition) {
+            const recognitionStopped = new Promise((resolve) => {
+                voiceStopResolveRef.current = resolve;
+                voiceStopTimeoutRef.current = window.setTimeout(() => {
+                    voiceStopResolveRef.current?.();
+                    voiceStopResolveRef.current = null;
+                    voiceStopTimeoutRef.current = null;
+                }, 800);
+            });
+            try {
+                activeRecognition.stop();
+            } catch (error) {
+                window.clearTimeout(voiceStopTimeoutRef.current);
+                voiceStopTimeoutRef.current = null;
+                voiceStopResolveRef.current?.();
+                voiceStopResolveRef.current = null;
+                setAlert(`Voice input could not stop cleanly: ${error.message}`);
+            }
+            await recognitionStopped;
+        }
+        recognitionRef.current = null;
+        setRecordingVoice(false);
+        const spokenAnswer = answerRef.current.trim();
+        if (!spokenAnswer) {
+            setBusy(false);
+            setAlert("No speech was recognized. Select Answer by voice and try again.");
+            return;
+        }
+        try {
+            const result = await interviewRequest(`/api/ai-interview/sessions/${session.id}/answers`, {
+                method: "POST",
+                body: JSON.stringify({ answer: spokenAnswer })
+            });
+            applySessionResponse(result);
+            answerRef.current = "";
+            setAnswer("");
+        } catch (error) {
+            setAlert(error.message);
+        } finally {
+            setBusy(false);
+        }
+    }, [applySessionResponse, remainingSeconds, session]);
+
+    const uploadResume = useCallback(async () => {
+        if (!resumeFile) {
+            setAlert("Choose a PDF resume to upload.");
+            return;
+        }
+        const formData = new FormData();
+        formData.append("file", resumeFile);
+        setBusy(true);
+        setAlert("");
+        try {
+            const result = await interviewRequest("/api/ai-interview/resume", {
+                method: "POST",
+                body: formData
+            });
+            setAccess(result);
+            setResumeFile(null);
+            setAlert("Resume uploaded successfully.");
+        } catch (error) {
+            setAlert(error.message);
+        } finally {
+            setBusy(false);
+        }
+    }, [resumeFile]);
+
+    const deleteResume = useCallback(async () => {
+        setBusy(true);
+        setAlert("");
+        try {
+            await interviewRequest("/api/ai-interview/resume", { method: "DELETE" });
+            const refreshedAccess = await interviewRequest("/api/ai-interview/access");
+            setAccess(refreshedAccess);
+            setAlert("Resume removed.");
+        } catch (error) {
+            setAlert(error.message);
+        } finally {
+            setBusy(false);
+        }
+    }, []);
+
+    const purchaseAccess = useCallback(async () => {
+        setBusy(true);
+        setAlert("");
+        try {
+            const order = await interviewRequest("/api/ai-interview/orders", { method: "POST" });
+            const scriptReady = await loadRazorpayScript();
+            if (!scriptReady || !window.Razorpay) {
+                throw new Error("The Razorpay checkout could not be loaded. Please try again.");
+            }
+            const checkout = new window.Razorpay({
+                key: order.keyId,
+                amount: order.amountPaise,
+                currency: order.currency,
+                name: "AI Interview",
+                description: "Interview practice access",
+                order_id: order.orderId,
+                handler: async (payment) => {
+                    try {
+                        const updatedAccess = await interviewRequest("/api/ai-interview/orders/verify", {
+                            method: "POST",
+                            body: JSON.stringify({
+                                razorpayOrderId: payment.razorpay_order_id,
+                                razorpayPaymentId: payment.razorpay_payment_id,
+                                razorpaySignature: payment.razorpay_signature
+                            })
+                        });
+                        setAccess(updatedAccess);
+                        setAlert("Payment verified. Interview access is ready.");
+                    } catch (error) {
+                        setAlert(error.message);
+                    }
+                },
+                modal: {
+                    ondismiss: () => setAlert("Payment checkout was closed before verification.")
+                },
+                theme: { color: "#385fe8" }
+            });
+            checkout.on("payment.failed", (event) => {
+                setAlert(event.error?.description || "Payment was not completed.");
+            });
+            checkout.open();
+        } catch (error) {
+            setAlert(error.message);
+        } finally {
+            setBusy(false);
+        }
+    }, []);
+
+    const selectSession = useCallback((selectedSession) => {
+        stopInterviewMedia();
+        if (!selectedSession) {
+            terminationHandledRef.current = false;
+            setSession(null);
+            setMonitoringMessage("");
+            answerRef.current = "";
+            setAnswer("");
+            setAlert("");
+            return;
+        }
+        terminationHandledRef.current = !isInterviewActive(selectedSession.status);
+        setRemainingSeconds(selectedSession.remainingSeconds || 0);
+        setMonitoringMessage("");
+        answerRef.current = "";
+        setAnswer("");
+        setSession(selectedSession);
+        setAlert("");
+    }, [stopInterviewMedia]);
+
+    const loadAdminReports = useCallback(async () => {
+        try {
+            setReports(await interviewRequest("/api/ai-interview/admin/reports"));
+        } catch (error) {
+            setAlert(error.message);
+        }
+    }, []);
+
+    const searchUsers = useCallback(async (event) => {
+        event.preventDefault();
+        if (searchQuery.trim().length < 2) {
+            setAlert("Enter at least 2 characters to search for a user.");
+            return;
+        }
+        setBusy(true);
+        try {
+            const result = await interviewRequest(
+                `/api/ai-interview/admin/users?query=${encodeURIComponent(searchQuery.trim())}`
+            );
+            setUserResults(result);
+            setSelectedUserId(result.length ? String(result[0].userId) : "");
+            setAlert("");
+        } catch (error) {
+            setAlert(error.message);
+        } finally {
+            setBusy(false);
+        }
+    }, [searchQuery]);
+
+    const grantInterviewAccess = useCallback(async () => {
+        if (!selectedUserId) {
+            setAlert("Choose a user before granting access.");
+            return;
+        }
+        const durationDays = grantDays === "CUSTOM" ? Number(customGrantDays) : Number(grantDays);
+        if (!Number.isInteger(durationDays) || durationDays < 1 || durationDays > 365) {
+            setAlert("Choose an access duration between 1 and 365 days.");
+            return;
+        }
+        setBusy(true);
+        try {
+            await interviewRequest("/api/ai-interview/admin/grants", {
+                method: "POST",
+                body: JSON.stringify({
+                    userId: Number(selectedUserId),
+                    durationDays
+                })
+            });
+            setAlert("Interview access granted.");
+            await loadAdminReports();
+        } catch (error) {
+            setAlert(error.message);
+        } finally {
+            setBusy(false);
+        }
+    }, [customGrantDays, grantDays, loadAdminReports, selectedUserId]);
+
+    const revokeInterviewAccess = useCallback(async (userId) => {
+        setBusy(true);
+        try {
+            await interviewRequest(`/api/ai-interview/admin/grants/${userId}`, { method: "DELETE" });
+            setAlert("Administrator access grant revoked.");
+            setUserResults((current) => current.map((user) => (
+                user.userId === userId
+                    ? { ...user, hasAccess: false, accessSource: null, adminGrantExpiresAt: null }
+                    : user
+            )));
+        } catch (error) {
+            setAlert(error.message);
+        } finally {
+            setBusy(false);
+        }
+    }, []);
+
+    const startVoiceAnswer = useCallback(() => {
+        const audioTrack = streamRef.current?.getAudioTracks()
+            .find((track) => track.readyState === "live" && track.enabled);
+        if (!audioTrack) {
+            setAlert("The microphone is not available. Reconnect it before recording an answer.");
+            return;
+        }
+        const synth = window.speechSynthesis;
+        if (synth?.speaking || synth?.pending) {
+            setAlert("Please listen to the full question before answering.");
+            return;
+        }
+        if (voiceCaptureActiveRef.current) return;
+
+        if (!window.MediaRecorder) {
+            setAlert("Audio recording is not supported in this browser. Use a current version of Chrome or Edge.");
+            return;
+        }
+        const mimeType = typeof window.MediaRecorder.isTypeSupported === "function"
+            ? ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"]
+                .find((type) => window.MediaRecorder.isTypeSupported(type))
+            : undefined;
+        let recorder;
+        try {
+            const audioOnlyStream = new MediaStream([audioTrack]);
+            recorder = new window.MediaRecorder(
+                audioOnlyStream,
+                mimeType ? { mimeType } : undefined
+            );
+        } catch (error) {
+            setAlert(`Audio recording could not start: ${error.message}`);
+            return;
+        }
+
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        voiceFinalTranscriptRef.current = "";
+        answerRef.current = "";
+        voiceRecognitionErrorRef.current = "";
+        audioChunksRef.current = [];
+        voiceCaptureActiveRef.current = true;
+        mediaRecorderRef.current = recorder;
+        setRecordingVoice(true);
+        setAnswer("");
+        setAlert("");
+
+        recorder.ondataavailable = (event) => {
+            if (event.data.size > 0) audioChunksRef.current.push(event.data);
+        };
+        recorder.onerror = (event) => {
+            voiceCaptureActiveRef.current = false;
+            setRecordingVoice(false);
+            setAlert(`Audio recording failed: ${event.error?.message || "Unknown recording error."}`);
+        };
+        recorder.onstop = async () => {
+            if (discardRecordingRef.current) {
+                discardRecordingRef.current = false;
+                audioChunksRef.current = [];
+                mediaRecorderRef.current = null;
+                return;
+            }
+            setRecordingVoice(false);
+            setBusy(true);
+
+            const activeRecognition = recognitionRef.current;
+            if (activeRecognition) {
+                await new Promise((resolve) => {
+                    voiceStopResolveRef.current = resolve;
+                    voiceStopTimeoutRef.current = window.setTimeout(() => {
+                        voiceStopResolveRef.current?.();
+                        voiceStopResolveRef.current = null;
+                        voiceStopTimeoutRef.current = null;
+                    }, 1500);
+                    try {
+                        activeRecognition.stop();
+                    } catch {
+                        window.clearTimeout(voiceStopTimeoutRef.current);
+                        voiceStopTimeoutRef.current = null;
+                        voiceStopResolveRef.current = null;
+                        resolve();
+                    }
+                });
+            }
+            recognitionRef.current = null;
+            mediaRecorderRef.current = null;
+
+            try {
+                const blob = new Blob(audioChunksRef.current, {
+                    type: recorder.mimeType || "audio/webm"
+                });
+                audioChunksRef.current = [];
+                if (!blob.size) {
+                    throw new Error("No audio was captured. Check your microphone and try again.");
+                }
+                const formData = new FormData();
+                const filename = blob.type.startsWith("audio/mp4") ? "answer.m4a" : "answer.webm";
+                formData.append("audio", blob, filename);
+                const result = await interviewRequest(
+                    `/api/ai-interview/sessions/${sessionId}/transcription?language=${encodeURIComponent(transcriptionLanguage)}`,
+                    { method: "POST", body: formData }
+                );
+                answerRef.current = result.transcript;
+                setAnswer(result.transcript);
+                setAlert(`Transcribed with ${result.provider}. Review the transcript before submitting.`);
+            } catch (error) {
+                const fallbackTranscript = voiceFinalTranscriptRef.current.trim();
+                if (!fallbackTranscript) {
+                    setAlert(error.message);
+                    return;
+                }
+                answerRef.current = fallbackTranscript;
+                setAnswer(fallbackTranscript);
+                const recognitionNote = voiceRecognitionErrorRef.current
+                    ? ` Browser recognition also reported: ${voiceRecognitionErrorRef.current}`
+                    : "";
+                setAlert(`High-accuracy transcription was unavailable. Using browser speech recognition instead. ${error.message}${recognitionNote}`);
+            } finally {
+                setBusy(false);
+            }
+        };
+
+        const startRecognition = () => {
+            if (!voiceCaptureActiveRef.current || !SpeechRecognition) return;
+            let recognition;
+            try {
+                recognition = new SpeechRecognition();
+            } catch (error) {
+                voiceCaptureActiveRef.current = false;
+                voiceRecognitionErrorRef.current = `Voice recognition could not start: ${error.message}`;
+                setAlert(`Voice recognition could not start: ${error.message}`);
+                return;
+            }
+            recognition.lang = {
+                en: "en-US",
+                ta: "ta-IN",
+                hi: "hi-IN",
+                es: "es-ES",
+                fr: "fr-FR",
+                de: "de-DE"
+            }[transcriptionLanguage];
+            recognition.interimResults = true;
+            recognition.continuous = true;
+            recognition.maxAlternatives = 5;
+            recognitionRef.current = recognition;
+
+            recognition.onresult = (event) => {
+                if (recognitionRef.current !== recognition) return;
+                for (let index = event.resultIndex; index < event.results.length; index += 1) {
+                    const result = event.results[index];
+                    const bestAlternative = Array.from(result)
+                        .sort((left, right) => (right.confidence || 0) - (left.confidence || 0))[0];
+                    const transcript = bestAlternative?.transcript?.trim();
+                    if (result.isFinal && transcript) {
+                        voiceFinalTranscriptRef.current = [
+                            voiceFinalTranscriptRef.current,
+                            transcript
+                        ].filter(Boolean).join(" ");
+                    }
+                }
+                const interimTranscript = Array.from(event.results)
+                    .filter((result) => !result.isFinal)
+                    .map((result) => result[0]?.transcript?.trim() || "")
+                    .filter(Boolean)
+                    .join(" ");
+                answerRef.current = [voiceFinalTranscriptRef.current, interimTranscript].filter(Boolean).join(" ");
+                setAnswer(answerRef.current);
+            };
+            recognition.onerror = (event) => {
+                if (recognitionRef.current !== recognition) return;
+                if (event.error === "no-speech" || event.error === "aborted") return;
+                const errorMessage = event.error === "not-allowed" || event.error === "service-not-allowed"
+                    ? "Voice recognition is blocked. Allow microphone and speech recognition access in your browser settings."
+                    : event.error === "audio-capture"
+                        ? "No microphone input was detected. Check your microphone and try again."
+                        : event.error === "network"
+                            ? "The browser speech service is unavailable. Check your internet connection and try again."
+                            : `Voice recognition stopped: ${event.error}.`;
+                voiceRecognitionErrorRef.current = errorMessage;
+                voiceCaptureActiveRef.current = false;
+                recognitionRef.current = null;
+                window.clearTimeout(voiceRestartTimeoutRef.current);
+            };
+            recognition.onend = () => {
+                if (!voiceCaptureActiveRef.current || recognitionRef.current !== recognition) {
+                    if (recognitionRef.current === recognition) recognitionRef.current = null;
+                    window.clearTimeout(voiceStopTimeoutRef.current);
+                    voiceStopTimeoutRef.current = null;
+                    voiceStopResolveRef.current?.();
+                    voiceStopResolveRef.current = null;
+                    return;
+                }
+                recognitionRef.current = null;
+                voiceRestartTimeoutRef.current = window.setTimeout(startRecognition, 300);
+            };
+            try {
+                recognition.start();
+            } catch (error) {
+                voiceCaptureActiveRef.current = false;
+                recognitionRef.current = null;
+                voiceRecognitionErrorRef.current = `Voice recognition could not start: ${error.message}`;
+                setAlert(`Voice recognition could not start: ${error.message}`);
+            }
+        };
+
+        try {
+            discardRecordingRef.current = false;
+            recorder.start(1000);
+            startRecognition();
+        } catch (error) {
+            voiceCaptureActiveRef.current = false;
+            mediaRecorderRef.current = null;
+            setRecordingVoice(false);
+            setAlert(`Voice recording could not start: ${error.message}`);
+        }
+    }, [sessionId, transcriptionLanguage]);
+
+    const stopVoiceAnswer = useCallback(() => {
+        voiceCaptureActiveRef.current = false;
+        window.clearTimeout(voiceRestartTimeoutRef.current);
+        if (mediaRecorderRef.current?.state === "recording") {
+            mediaRecorderRef.current.stop();
+        }
+    }, []);
+
+    const sessionIsActive = isInterviewActive(session?.status);
+    const isLive = sessionIsActive && cameraOn && microphoneOn;
+    const assessment = parseAssessment(session?.feedback);
+
+    if (loading) {
+        return (
+            <main className="interview-page">
+                <div className="interview-loading">
+                    <LoaderCircle className="interview-spinner" size={20} />
+                    Loading AI Interview...
+                </div>
+            </main>
+        );
+    }
+
+    return (
+        <main className="interview-page">
+            <header className="interview-header">
+                <div>
+                    <span className="interview-eyebrow"><Sparkles size={13} /> PRACTICE WITH AI</span>
+                    <h1>AI Interview</h1>
+                    <p>Prepare for a realistic AI-led interview tailored to your role and experience.</p>
+                </div>
+                <div className="interview-privacy-chip"><ShieldCheck size={15} /> Camera and microphone are used for this session</div>
+            </header>
+
+            {alert && (
+                <div className={`interview-alert ${alert.toLowerCase().includes("successfully")
+                    || alert.toLowerCase().includes("verified")
+                    || alert.toLowerCase().includes("granted")
+                    || alert.toLowerCase().includes("removed")
+                    ? "interview-alert-success"
+                    : "interview-alert-error"}`}
+                >
+                    {alert.toLowerCase().includes("successfully")
+                    || alert.toLowerCase().includes("verified")
+                    || alert.toLowerCase().includes("granted")
+                    || alert.toLowerCase().includes("removed")
+                        ? <CheckCircle2 size={17} />
+                        : <AlertTriangle size={17} />}
+                    <span>{alert}</span>
+                    <button type="button" aria-label="Dismiss message" onClick={() => setAlert("")}>
+                        <X size={15} />
+                    </button>
+                </div>
+            )}
+
+            {access && (
+                <section className="interview-access-banner">
+                    <div className={`interview-access-icon ${access.hasAccess ? "active" : ""}`}>
+                        {access.hasAccess ? <BadgeCheck size={21} /> : <LockKeyhole size={20} />}
+                    </div>
+                    <div className="interview-access-copy">
+                        <strong>{access.hasAccess ? "Interview access is active" : "Unlock AI Interview"}</strong>
+                        <p>{access.hasAccess
+                            ? access.expiresAt ? `Access through ${formatDate(access.expiresAt)}` : "Administrator access"
+                            : "Subscribe to start a personalized AI-powered mock interview."}</p>
+                    </div>
+                    {!access.hasAccess && (
+                        <button className="interview-primary-button" type="button" disabled={busy} onClick={purchaseAccess}>
+                            {busy ? <LoaderCircle className="interview-spinner" size={15} /> : <LockKeyhole size={15} />}
+                            Subscribe {access.pricePaise ? `- ₹${(access.pricePaise / 100).toFixed(0)}` : ""}
+                        </button>
+                    )}
+                </section>
+            )}
+
+            {session?.status === "TERMINATED" && (
+                <section className="interview-panel interview-terminated-panel" role="alert" aria-live="assertive">
+                    <div className="interview-terminated-icon"><AlertTriangle size={24} /></div>
+                    <div>
+                        <span className="interview-eyebrow">PROCTORING VIOLATION</span>
+                        <h2>Interview Terminated</h2>
+                        <p>{session.terminationReason || "The interview was ended because the proctoring violation limit was reached."}</p>
+                        <p className="interview-terminated-note">Your answers and monitoring events have been saved in interview history.</p>
+                    </div>
+                </section>
+            )}
+
+            {session?.status === "TIME_EXPIRED" && (
+                <section className="interview-panel interview-expired-panel" role="status" aria-live="assertive">
+                    <div className="interview-terminated-icon interview-expired-icon"><Clock3 size={24} /></div>
+                    <div>
+                        <span className="interview-eyebrow">SESSION ENDED</span>
+                        <h2>Interview Time Expired</h2>
+                        <p>{session.terminationReason || "The server-controlled interview time limit was reached."}</p>
+                        <p className="interview-terminated-note">Your session has been saved to interview history.</p>
+                    </div>
+                </section>
+            )}
+
+            {session?.status === "COMPLETED" && (
+                <section className="interview-panel interview-completed-panel">
+                    <div className="interview-terminated-icon interview-completed-icon"><CheckCircle2 size={24} /></div>
+                    <div>
+                        <span className="interview-eyebrow">SESSION COMPLETE</span>
+                        <h2>Interview Completed</h2>
+                        <p>Your interview has been reviewed. Your feedback is available below and in interview history.</p>
+                    </div>
+                </section>
+            )}
+
+            {!session && (
+                <div className="interview-preparation-grid">
+                    <section className="interview-panel">
+                        <div className="interview-panel-title">
+                            <span className="interview-step-number">1</span>
+                            <div><h2>Prepare your resume</h2><p>Upload a PDF so the AI can tailor questions to your experience.</p></div>
+                        </div>
+                        {access?.resumeFileName ? (
+                            <div className="interview-resume-saved">
+                                <div className="interview-file-icon"><FileText size={18} /></div>
+                                <div><strong>{access.resumeFileName}</strong><span>Uploaded {formatDate(access.resumeUploadedAt)}</span></div>
+                                <button type="button" aria-label="Delete saved resume" disabled={busy} onClick={deleteResume}>
+                                    <Trash2 size={15} />
+                                </button>
+                            </div>
+                        ) : (
+                            <>
+                                <label className="interview-upload-box">
+                                    <Upload size={21} />
+                                    <strong>{resumeFile?.name || "Choose your resume"}</strong>
+                                    <span>PDF only, up to 5 MB</span>
+                                    <input
+                                        type="file"
+                                        accept="application/pdf,.pdf"
+                                        onChange={(event) => setResumeFile(event.target.files?.[0] || null)}
+                                    />
+                                </label>
+                                <button className="interview-primary-button interview-upload-button" type="button" disabled={!resumeFile || busy} onClick={uploadResume}>
+                                    {busy ? <LoaderCircle className="interview-spinner" size={15} /> : <Upload size={15} />}
+                                    Upload resume
+                                </button>
+                            </>
+                        )}
+                        <p className="interview-privacy-note"><ShieldCheck size={14} /> Your resume is stored securely and used only to personalize interview questions.</p>
+                    </section>
+
+                    <section className="interview-panel">
+                        <div className="interview-panel-title">
+                            <span className="interview-step-number">2</span>
+                            <div><h2>Check your setup</h2><p>Allow camera and microphone access before beginning the monitored interview.</p></div>
+                        </div>
+                        <label className="interview-field">
+                            Target job role
+                            <input value={jobRole} maxLength={120} onChange={(event) => setJobRole(event.target.value)} placeholder="e.g. Software Engineer" />
+                        </label>
+                        <label className="interview-field interview-setup-field">
+                            Interview mode
+                            <select value={interviewMode} onChange={(event) => setInterviewMode(event.target.value)}>
+                                <option value="TECHNICAL">Technical Interview</option>
+                                <option value="BEHAVIORAL">Behavioral / HR Interview</option>
+                                <option value="FULL">Full Interview</option>
+                            </select>
+                        </label>
+                        <label className="interview-field interview-setup-field">
+                            Starting difficulty
+                            <select value={difficulty} onChange={(event) => setDifficulty(event.target.value)}>
+                                <option value="BEGINNER">Beginner</option>
+                                <option value="INTERMEDIATE">Intermediate</option>
+                                <option value="ADVANCED">Advanced</option>
+                            </select>
+                        </label>
+                        <div className="interview-device-state">
+                            <span className={`interview-device-indicator ${cameraOn ? "on" : ""}`}>
+                                {cameraOn ? <Video size={13} /> : <VideoOff size={13} />} Camera {cameraOn ? "ready" : "off"}
+                            </span>
+                            <span className={`interview-device-indicator ${microphoneOn ? "on" : ""}`}>
+                                {microphoneOn ? <Mic size={13} /> : <MicOff size={13} />} Microphone {microphoneOn ? "ready" : "off"}
+                            </span>
+                            {!stream && (
+                                <button className="interview-device-enable" type="button" disabled={busy} onClick={enableDevices}>
+                                    <Video size={13} /> Enable devices
+                                </button>
+                            )}
+                            {stream && (
+                                <button className="interview-device-off" type="button" onClick={stopDevices}>Turn devices off</button>
+                            )}
+                        </div>
+                        {stream && (
+                            <video className="interview-camera-preview" ref={videoRef} autoPlay muted playsInline />
+                        )}
+                        <div className="interview-setup-status" role="status">
+                            <span className={connectionStatus === "Connected" ? "connected" : "disconnected"}>
+                                Connection: {connectionStatus}
+                            </span>
+                            <span>Interview duration is controlled by the server.</span>
+                        </div>
+                        <label className="interview-consent">
+                            <input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} />
+                            <span>I understand that camera, microphone, tab visibility, and fullscreen status are monitored. Webcam video is analyzed in this browser and is not uploaded. Spoken answers are recorded temporarily in memory and sent for transcription when I stop; this app does not store the audio. Browser speech recognition may be used if high-accuracy transcription is unavailable.</span>
+                        </label>
+                        <button className="interview-primary-button interview-start-button" type="button" disabled={busy || !access?.hasAccess || !access?.resumeFileName} onClick={startInterview}>
+                            {busy ? <LoaderCircle className="interview-spinner" size={16} /> : <ArrowRight size={16} />}
+                            Start interview
+                        </button>
+                        <p className="interview-gate-caption">
+                            {!access?.hasAccess
+                                ? "Active interview access is required."
+                                : !access?.resumeFileName
+                                    ? "Upload a resume to continue."
+                                    : "Camera, microphone, role, consent, and audio recording support are required."}
+                        </p>
+                    </section>
+                </div>
+            )}
+
+            {session && (
+                <section className="interview-live-workspace">
+                    <div className="interview-live-header">
+                        <div>
+                            <span className="interview-eyebrow">AI MOCK INTERVIEW</span>
+                            <h2>{session.jobRole}</h2>
+                            <p>{modeLabel(session.interviewMode)} · {statusLabel(session.status)} · {formatDate(session.createdAt)}</p>
+                        </div>
+                        <div className="interview-live-controls">
+                            {isLive && <span><i /> Proctoring active</span>}
+                            {sessionIsActive && (
+                                <span className="interview-connection-status">
+                                    <i className={connectionStatus === "Connected" ? "" : "offline"} />
+                                    {connectionStatus}
+                                </span>
+                            )}
+                            {sessionIsActive && !isLive && (
+                                <button type="button" disabled={busy} onClick={continueInterview}>
+                                    {busy ? "Connecting..." : "Reconnect camera & microphone"}
+                                </button>
+                            )}
+                            <button type="button" onClick={() => selectSession(null)}>Back to setup</button>
+                        </div>
+                    </div>
+
+                    {monitoringMessage && sessionIsActive && (
+                        <div className="interview-monitoring-warning" role="status" aria-live="polite">
+                            <AlertTriangle size={18} />
+                            <span>{monitoringMessage}</span>
+                            <button type="button" aria-label="Dismiss warning" onClick={() => setMonitoringMessage("")}><X size={15} /></button>
+                        </div>
+                    )}
+
+                    {sessionIsActive && !isLive && (
+                        <div className="interview-panel interview-resume-gate">
+                            <div className="interview-device-required"><Video size={18} /><Mic size={18} /></div>
+                            <h2>Reconnect to continue</h2>
+                            <p>Your interview is saved on the server. Reconnect your camera and microphone to continue without resetting the timer.</p>
+                            <button className="interview-primary-button" type="button" disabled={busy} onClick={continueInterview}>
+                                {busy ? <LoaderCircle className="interview-spinner" size={15} /> : <Video size={15} />}
+                                Reconnect devices
+                            </button>
+                        </div>
+                    )}
+
+                    {sessionIsActive && isLive && (
+                        <div className="interview-active-grid">
+                            <section className="interview-panel interview-question-panel">
+                                <div className="interview-question-heading">
+                                    <span className="interview-eyebrow">{modeLabel(session.interviewMode)}</span>
+                                    <div className="interview-question-controls">
+                                        <span className="interview-timer"><Clock3 size={14} /> Time remaining {formatRemaining(remainingSeconds)}</span>
+                                        <label className="interview-voice-setting">
+                                            <span>Interviewer voice</span>
+                                            <select
+                                                aria-label="Interviewer voice"
+                                                value={selectedVoiceURI}
+                                                onChange={(event) => setSelectedVoiceURI(event.target.value)}
+                                            >
+                                                {availableVoices.map((voice) => (
+                                                    <option key={voice.voiceURI} value={voice.voiceURI}>
+                                                        {voice.name}{soundsLikeFemaleVoice(voice) ? " (female-sounding)" : ""}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        </label>
+                                        <label className="interview-voice-setting">
+                                            <span>Answer language</span>
+                                            <select
+                                                aria-label="Answer language"
+                                                value={transcriptionLanguage}
+                                                disabled={recordingVoice || busy}
+                                                onChange={(event) => setTranscriptionLanguage(event.target.value)}
+                                            >
+                                                <option value="en">English</option>
+                                                <option value="ta">Tamil</option>
+                                                <option value="hi">Hindi</option>
+                                                <option value="es">Spanish</option>
+                                                <option value="fr">French</option>
+                                                <option value="de">German</option>
+                                            </select>
+                                        </label>
+                                        <button
+                                            className="interview-secondary-button interview-read-question"
+                                            type="button"
+                                            disabled={questionSpeaking || recordingVoice || busy}
+                                            onClick={() => speakQuestion(session.currentQuestion)}
+                                        >
+                                            <Volume2 size={14} />
+                                            {questionSpeaking ? "Reading question" : "Read question aloud"}
+                                        </button>
+                                    </div>
+                                </div>
+                                <p className="interview-question-text">{session.currentQuestion}</p>
+                                <form onSubmit={submitAnswer}>
+                                    <label className="interview-field">
+                                        Your spoken answer
+                                        <textarea
+                                            value={answer}
+                                            maxLength={12_000}
+                                            rows={7}
+                                            placeholder="Select Answer by voice and speak naturally. Your transcript will appear here."
+                                            readOnly
+                                            aria-label="Voice recognition transcript"
+                                        />
+                                    </label>
+                                    <div className="interview-answer-actions">
+                                        <span>{answer.length.toLocaleString()} / 12,000 characters</span>
+                                        {recordingVoice ? (
+                                            <button className="interview-secondary-button interview-voice-answer" type="button" onClick={stopVoiceAnswer}>
+                                            <MicOff size={14} /> Stop & transcribe
+                                            </button>
+                                        ) : (
+                                            <button
+                                                className="interview-secondary-button"
+                                                type="button"
+                                            disabled={busy}
+                                                onClick={startVoiceAnswer}
+                                            >
+                                                <Mic size={14} /> Answer by voice
+                                            </button>
+                                        )}
+                                        <button className="interview-primary-button" type="submit" disabled={busy || recordingVoice || !answer.trim() || !sessionIsActive || remainingSeconds <= 0}>
+                                            {busy ? <LoaderCircle className="interview-spinner" size={15} /> : <ArrowRight size={15} />}
+                                            Submit answer
+                                        </button>
+                                    </div>
+                                    <p className="interview-speech-note" role="status" aria-live="polite">
+                                        {questionSpeaking
+                                            ? "Listen to the question before answering. The microphone stays off while it is being read."
+                                            : recordingVoice
+                                                ? "Recording your answer. Speak clearly, then stop to transcribe it. Audio is sent securely for transcription and is not stored by this application."
+                                                : "Answers are voice-only. Review the transcript before submitting. Groq Whisper is used when configured; browser recognition is the fallback."}
+                                    </p>
+                                </form>
+                            </section>
+
+                            <aside className="interview-panel interview-camera-panel">
+                                <div className="interview-panel-heading"><h2>Proctoring view</h2><ShieldCheck size={17} /></div>
+                                <div className="interview-camera-frame">
+                                    {cameraOn
+                                        ? <video ref={videoRef} autoPlay muted playsInline />
+                                        : <div><VideoOff size={24} /><span>Camera interrupted</span></div>}
+                                    <span className="interview-recording-label"><i /> LIVE MONITORING</span>
+                                </div>
+                                <div className="interview-live-device-status">
+                                    <span className={cameraOn ? "connected" : "disconnected"}>{cameraOn ? <Video size={13} /> : <VideoOff size={13} />} Camera {cameraOn ? "connected" : "disconnected"}</span>
+                                    <span className={microphoneOn ? "connected" : "disconnected"}>{microphoneOn ? <Mic size={13} /> : <MicOff size={13} />} Microphone {microphoneOn ? "connected" : "disconnected"}</span>
+                                    <span className={connectionStatus === "Connected" ? "connected" : "disconnected"}>{connectionStatus === "Connected" ? <CheckCircle2 size={13} /> : <AlertTriangle size={13} />} Connection {connectionStatus.toLowerCase()}</span>
+                                </div>
+                                <p>Keep this tab visible and stay in fullscreen. Repeated device interruptions end the interview automatically.</p>
+                            </aside>
+                        </div>
+                    )}
+
+                    {(session.status === "COMPLETED"
+                        || session.status === "TERMINATED"
+                        || session.status === "TIME_EXPIRED") && (
+                        <div className="interview-review-layout">
+                            <section className="interview-panel">
+                                <div className="interview-panel-heading">
+                                    <h2>{session.status === "TERMINATED" ? "Saved transcript" : "Interview transcript"}</h2>
+                                    <span>{session.transcript?.length || 0} questions</span>
+                                </div>
+                                {(session.transcript || []).map((turn, index) => (
+                                    <article className="interview-transcript-turn" key={`${session.id}-${index}`}>
+                                        <strong>Question {index + 1}: {turn.question}</strong>
+                                        <p>{turn.answer || "No answer was submitted before the interview ended."}</p>
+                                    </article>
+                                ))}
+                            </section>
+                            {session.status === "COMPLETED" && (
+                                <aside className="interview-panel">
+                                        <div className="interview-panel-heading"><h2><Sparkles size={16} /> Your knowledge review</h2></div>
+                                        {assessment ? (
+                                            <div className="interview-assessment">
+                                                <p className="interview-assessment-summary">
+                                                    {assessment.summary}
+                                                </p>
+                                                <h3>Topics assessed from your answers</h3>
+                                                <div className="interview-topic-list">
+                                                    {assessment.topics.map((topic, index) => (
+                                                        <article className="interview-topic-card" key={`${topic.topic}-${index}`}>
+                                                            <div className="interview-topic-heading">
+                                                                <strong>{topic.topic}</strong>
+                                                                <span className={`interview-topic-rating rating-${topic.rating.toLowerCase()}`}>
+                                                                    {topic.rating.replaceAll("_", " ")}
+                                                                </span>
+                                                            </div>
+                                                            <p><b>Evidence:</b> {topic.evidence}</p>
+                                                            <p><b>Next step:</b> {topic.nextStep}</p>
+                                                        </article>
+                                                    ))}
+                                                </div>
+                                                {assessment.nextSteps?.length > 0 && (
+                                                    <>
+                                                        <h3>Practice plan</h3>
+                                                        <ul className="interview-practice-list">
+                                                            {assessment.nextSteps.map((step, index) => (
+                                                                <li key={`${index}-${step}`}>{step}</li>
+                                                            ))}
+                                                        </ul>
+                                                    </>
+                                                )}
+                                            </div>
+                                        ) : (
+                                            <p className="interview-feedback-copy">{session.feedback || "Feedback is not available for this interview."}</p>
+                                        )}
+                                        <p className="interview-feedback-disclaimer">Practice feedback is educational and is not a validated hiring assessment.</p>
+                                    </aside>
+                                )}
+                        </div>
+                    )}
+                </section>
+            )}
+
+            {!session && (
+                <div className="interview-preparation-grid">
+                    <section className="interview-panel">
+                        <div className="interview-panel-heading">
+                            <div><span className="interview-eyebrow">YOUR PRACTICE</span><h2>Interview history</h2></div>
+                            <Clock3 size={18} />
+                        </div>
+                        {sessions.length ? sessions.map((item) => (
+                            <button className="interview-history-row" key={item.id} type="button" onClick={() => selectSession(item)}>
+                                <span className="interview-history-icon">
+                                    {item.status === "TERMINATED" ? <AlertTriangle size={16} /> : <FileText size={16} />}
+                                </span>
+                                <span className="interview-history-copy">
+                                    <strong>{item.jobRole}</strong>
+                                    <small>{modeLabel(item.interviewMode)} · {statusLabel(item.status)} · {formatDate(item.createdAt)} · {formatRemaining(item.durationSeconds || 0)} · {item.status === "COMPLETED" ? "Feedback ready" : "No completion feedback"}</small>
+                                </span>
+                                <ArrowRight size={15} />
+                            </button>
+                        )) : <p className="interview-empty-inline">Your completed and terminated interviews will appear here.</p>}
+                    </section>
+
+                    {access?.isAdmin && (
+                        <section className="interview-panel">
+                            <div className="interview-panel-heading">
+                                <div><span className="interview-eyebrow">ADMINISTRATION</span><h2>Access and monitoring reports</h2></div>
+                                <ShieldCheck size={18} />
+                            </div>
+                            <form className="interview-admin-search" onSubmit={searchUsers}>
+                                <label className="interview-field">
+                                    Find a user by name, email, or user ID
+                                    <input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} />
+                                </label>
+                                <button className="interview-secondary-button" disabled={busy} type="submit">Search</button>
+                            </form>
+                            {userResults.length > 0 && (
+                                <>
+                                    <div className="interview-user-results">
+                                        {userResults.map((user) => (
+                                            <div className={`interview-user-result ${String(user.userId) === selectedUserId ? "selected" : ""}`} key={user.userId}>
+                                                <button className="interview-user-select" type="button" onClick={() => setSelectedUserId(String(user.userId))}>
+                                                    <strong>{user.name}</strong>
+                                                    <span>{user.email}</span>
+                                                    <em>{user.hasAccess
+                                                        ? `${user.accessSource === "ADMIN_GRANT" ? "Admin access" : "Paid access"} through ${formatDate(user.accessExpiresAt)}`
+                                                        : "No active access"}</em>
+                                                </button>
+                                                {user.accessSource === "ADMIN_GRANT" && (
+                                                    <button className="interview-revoke-button" type="button" disabled={busy} onClick={() => revokeInterviewAccess(user.userId)}>
+                                                        <X size={13} /> Revoke
+                                                    </button>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <div className="interview-admin-search">
+                                        <label className="interview-field">Grant duration
+                                            <select value={grantDays} onChange={(event) => setGrantDays(event.target.value)}>
+                                                <option value="1">1 day</option>
+                                                <option value="7">7 days</option>
+                                                <option value="30">30 days</option>
+                                                <option value="90">90 days</option>
+                                                <option value="CUSTOM">Custom duration</option>
+                                            </select>
+                                        </label>
+                                        <button className="interview-primary-button" type="button" disabled={busy || !selectedUserId} onClick={grantInterviewAccess}>Grant access</button>
+                                    </div>
+                                    {grantDays === "CUSTOM" && (
+                                        <label className="interview-field interview-custom-duration">
+                                            Custom duration (1-365 days)
+                                            <input
+                                                type="number"
+                                                min="1"
+                                                max="365"
+                                                value={customGrantDays}
+                                                onChange={(event) => setCustomGrantDays(event.target.value)}
+                                            />
+                                        </label>
+                                    )}
+                                </>
+                            )}
+                            <div className="interview-panel-heading">
+                                <h2>Monitoring events</h2>
+                                <button className="interview-secondary-button" type="button" onClick={loadAdminReports}>Refresh</button>
+                            </div>
+                            {reports.length ? reports.map((report) => (
+                                <article className="interview-report-card" key={report.sessionId}>
+                                    <strong>{report.userEmail} · {report.jobRole}</strong>
+                                    <span>{modeLabel(report.interviewMode)} · {statusLabel(report.status)} · {formatDate(report.createdAt)} · {formatRemaining(report.durationSeconds || 0)}</span>
+                                    {report.flags.map((flag, index) => (
+                                        <small key={`${report.sessionId}-${index}`}>
+                                            {flag.eventType} · {flag.details || "No additional details"} · {formatDate(flag.occurredAt)}
+                                        </small>
+                                    ))}
+                                </article>
+                            )) : <p className="interview-empty-inline">No monitoring events have been recorded.</p>}
+                        </section>
+                    )}
+                </div>
+            )}
+
+            {!session && (
+                <div className="interview-safety-note">
+                    <Check size={17} />
+                    <div><strong>Fair practice, clear rules</strong><p>This is a practice tool, not a hiring decision. Proctoring events are saved to the interview record and are visible to authorized administrators.</p></div>
+                </div>
+            )}
+        </main>
+    );
+}

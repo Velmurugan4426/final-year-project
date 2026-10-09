@@ -105,12 +105,14 @@ public class AnalyticsService {
                 continue;
             }
 
+            Integer storedScore = attempt.getScore();
+            int attemptScore = storedScore != null ? storedScore : 0;
             completedAttempts.add(attempt);
             LocalDate completedDate = attempt.getCompletedAt().toLocalDate();
             DailyAccumulator day = daily.get(completedDate);
             if (day != null) {
                 day.completedQuizzes++;
-                day.quizScoreTotal += attempt.getScore() == null ? 0 : attempt.getScore();
+                day.quizScoreTotal += attemptScore;
                 day.quizScoreCount++;
             }
 
@@ -144,14 +146,18 @@ public class AnalyticsService {
             }
 
             if (attempt.getScore() != null) {
-                scoreTotal += attempt.getScore();
+                scoreTotal += attemptScore;
                 scoreCount++;
+                Integer storedCorrectCount = attempt.getCorrectCount();
+                int recentCorrectCount = storedCorrectCount != null
+                        ? storedCorrectCount
+                        : correctCount;
                 recentAttempts.add(new AnalyticsResponse.RecentAttempt(
                         attempt.getId(),
                         attempt.getTopic(),
                         attempt.getDifficulty(),
-                        attempt.getScore(),
-                        attempt.getCorrectCount() == null ? correctCount : attempt.getCorrectCount(),
+                        attemptScore,
+                        recentCorrectCount,
                         questions.size(),
                         attempt.getCompletedAt()
                 ));
