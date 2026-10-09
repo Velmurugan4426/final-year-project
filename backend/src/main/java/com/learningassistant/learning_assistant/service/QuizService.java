@@ -175,6 +175,11 @@ public class QuizService {
         attempt.setDifficulty(request.difficulty().trim());
         attempt.setTimeLimitMinutes(request.timeLimitMinutes());
         attempt.setGenerationSource(source);
+        attempt.setStatus("IN_PROGRESS");
+        attempt.setElapsedSeconds(null);
+        attempt.setScore(null);
+        attempt.setCorrectCount(null);
+        attempt.setCompletedAt(null);
         attempt.setQuestionsJson(writeQuestions(questions));
         attempt = attemptRepository.save(attempt);
         return toResponse(attempt, questions, false);
@@ -499,7 +504,11 @@ public class QuizService {
                 attempt.getTopic(),
                 attempt.getDifficulty(),
                 attempt.getTimeLimitMinutes(),
-                includeAnswers ? attempt.getElapsedSeconds() : null,
+                includeAnswers
+                        ? attempt.getElapsedSeconds()
+                        : "IN_PROGRESS".equals(attempt.getStatus())
+                                ? elapsedSeconds(attempt)
+                                : null,
                 includeAnswers ? attempt.getScore() : null,
                 includeAnswers ? attempt.getCorrectCount() : null,
                 attempt.getStatus(),
@@ -509,6 +518,14 @@ public class QuizService {
                 questionResponses,
                 weak
         );
+    }
+
+    private int elapsedSeconds(QuizAttempt attempt) {
+        long elapsed = Math.max(
+                0,
+                Duration.between(attempt.getStartedAt(), LocalDateTime.now()).getSeconds()
+        );
+        return (int) Math.min(elapsed, Integer.MAX_VALUE);
     }
 
     private QuizAttemptSummaryResponse toSummary(QuizAttempt attempt) {

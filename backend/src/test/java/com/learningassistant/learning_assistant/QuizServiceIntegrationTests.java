@@ -332,6 +332,8 @@ class QuizServiceIntegrationTests {
         assertEquals("IN_PROGRESS", started.status());
         assertEquals(5, started.questions().size());
         assertEquals("Question bank fallback", started.generationSource());
+        assertNotNull(started.elapsedSeconds());
+        assertNull(started.completedAt());
         assertNull(started.score());
         assertNull(started.correctCount());
         assertTrue(started.questions().stream().allMatch(question ->
@@ -370,6 +372,8 @@ class QuizServiceIntegrationTests {
         QuizStartRequest request = new QuizStartRequest("Java", "Easy", 5, 10);
 
         QuizAttemptResponse started = quizService.start(token, request);
+        assertEquals("IN_PROGRESS", started.status());
+        assertNotNull(started.elapsedSeconds());
         assertTrue(started.questions().stream().allMatch(question ->
                 question.selectedOption() == null && question.correctOption() == null
         ));

@@ -27,6 +27,7 @@ import { fetchWithTimeout } from "../utils/apiRequest";
 import {
     createEmptyQuizAnswers,
     isQuizAnswerCorrect,
+    prepareNewQuiz,
     recordQuizAnswer
 } from "../utils/quizState";
 
@@ -103,6 +104,7 @@ function Quiz() {
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState("");
     const submitRef = useRef(null);
+    const timerStartedAtRef = useRef(0);
 
     const loadOverview = useCallback(async () => {
         const [attempts, weaknesses] = await Promise.all([
@@ -120,14 +122,16 @@ function Quiz() {
     }, [loadOverview]);
 
     const beginAttempt = (quiz, isNewAttempt = false) => {
-        setAttempt(quiz);
+        const activeQuiz = isNewAttempt ? prepareNewQuiz(quiz) : quiz;
+        setAttempt(activeQuiz);
         setAnswers(isNewAttempt
-            ? createEmptyQuizAnswers(quiz.questions.length)
-            : quiz.questions.map((question) => question.selectedOption ?? -1));
+            ? createEmptyQuizAnswers(activeQuiz.questions.length)
+            : activeQuiz.questions.map((question) => question.selectedOption ?? -1));
         setQuestionIndex(0);
-        setSecondsLeft(Math.max(0, quiz.timeLimitMinutes * 60 -
-            Math.floor((Date.now() - new Date(quiz.startedAt).getTime()) / 1000)));
-        setView(quiz.status === "COMPLETED" ? "result" : "exam");
+        const elapsedSeconds = activeQuiz.elapsedSeconds ?? 0;
+        setSecondsLeft(Math.max(0, activeQuiz.timeLimitMinutes * 60 - elapsedSeconds));
+        timerStartedAtRef.current = Date.now();
+        setView(isNewAttempt || activeQuiz.status !== "COMPLETED" ? "exam" : "result");
         setError("");
     };
 
@@ -179,8 +183,10 @@ function Quiz() {
 
     useEffect(() => {
         if (view !== "exam" || !attempt) return undefined;
+        const initialElapsedSeconds = attempt.elapsedSeconds ?? 0;
+        const timerStartedAt = timerStartedAtRef.current || Date.now();
         const updateTimer = () => {
-            const elapsed = Math.floor((Date.now() - new Date(attempt.startedAt).getTime()) / 1000);
+            const elapsed = initialElapsedSeconds + Math.floor((Date.now() - timerStartedAt) / 1000);
             const remaining = Math.max(0, attempt.timeLimitMinutes * 60 - elapsed);
             setSecondsLeft(remaining);
             if (remaining === 0) submitRef.current?.(true);
