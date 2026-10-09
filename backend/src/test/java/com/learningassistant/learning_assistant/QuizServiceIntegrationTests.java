@@ -53,8 +53,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "spring.datasource.username=sa",
         "spring.datasource.password=",
         "gemini.api-key=",
-        "grok.api-key=",
         "groq.api-key=",
+        "openrouter.api-key=",
+        "ai.provider=groq",
+        "ai.enabled-providers=groq,openrouter",
+        "ai.fallback-providers=openrouter",
         "ai-interview.admin-email=interview-admin@example.com",
         "app.jwt.secret=test-only-secret-with-at-least-32-characters"
 })

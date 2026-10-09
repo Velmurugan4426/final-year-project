@@ -141,26 +141,6 @@ public class QuizService {
             logger.warn("AI quiz response could not be used for topic {}: {}", request.topic(), aiFailure);
         }
 
-        if (questions.size() < request.questionCount()
-                && !"Grok".equals(source)) {
-            try {
-                TutorModelService.QuizGenerationResult generated =
-                        modelService.generateQuizQuestionsWithGrok(prompt);
-                List<StoredQuestion> grokQuestions =
-                        parseQuestions(generated.content(), request, previousQuestions);
-                if (grokQuestions.size() > questions.size()) {
-                    questions = grokQuestions;
-                    source = generated.provider();
-                }
-            } catch (ResponseStatusException exception) {
-                aiFailure = appendFailure(aiFailure, exception.getReason());
-                logger.warn("Grok quiz generation failed for topic {}: {}", request.topic(), exception.getReason());
-            } catch (IOException | IllegalArgumentException exception) {
-                aiFailure = appendFailure(aiFailure, exception.getMessage());
-                logger.warn("Grok quiz response could not be used for topic {}: {}", request.topic(), exception.getMessage());
-            }
-        }
-
         if (questions.size() < request.questionCount()) {
             Set<String> used = new HashSet<>(previousQuestions);
             used.addAll(questionKeys(questions));
@@ -180,7 +160,7 @@ public class QuizService {
                 );
             }
             if (aiFailure != null) {
-                logger.info("Question-bank fallback supplied a quiz after both AI providers failed: {}", aiFailure);
+                logger.info("Question-bank fallback supplied quiz questions after AI generation failed: {}", aiFailure);
             }
             if (source.equals("Question bank fallback")) {
                 source = "Question bank fallback";
@@ -606,10 +586,6 @@ public class QuizService {
                 .toLowerCase(Locale.ROOT)
                 .replaceAll("[^a-z0-9]+", " ")
                 .trim();
-    }
-
-    private static String appendFailure(String existing, String failure) {
-        return existing == null || existing.isBlank() ? failure : existing + " | " + failure;
     }
 
     private record StoredQuestion(

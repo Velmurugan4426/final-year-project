@@ -28,10 +28,13 @@ Spring Boot. Do not put API keys or passwords into source files:
 ```powershell
 $env:DB_USERNAME = "postgres"
 $env:DB_PASSWORD = "<your PostgreSQL password>"
-$env:GEMINI_API_KEY = "<your Gemini API key>"
-$env:GROK_API_KEY = "<your xAI Grok API key>"
 $env:GROQ_API_KEY = "<your Groq API key, for the AI tutor>"
-$env:AI_PROVIDER = "gemini"
+$env:OPENROUTER_API_KEY = "<your OpenRouter API key>"
+$env:AI_PROVIDER = "groq"
+$env:AI_ENABLED_PROVIDERS = "groq,openrouter"
+$env:AI_FALLBACK_PROVIDERS = "openrouter"
+$env:GROQ_MODEL = "openai/gpt-oss-120b"
+$env:OPENROUTER_MODEL = "openrouter/free"
 $env:JWT_SECRET = "<a random secret of at least 32 characters>"
 $env:AI_INTERVIEW_ADMIN_EMAIL = "velmurugan808k@gmail.com"
 $env:AI_INTERVIEW_UPI_ID = "<your Google Pay UPI ID>"
@@ -43,13 +46,18 @@ to the password configured for your local PostgreSQL `postgres` user; the
 development startup script does not contain or override database credentials.
 Tutor
 conversations, messages, and quiz attempts are created automatically through
-JPA schema updates. AI keys are used only by the backend. Quiz generation tries
-Gemini first and then Grok; if neither provider returns a valid question set,
-the quiz uses a clearly identified question-bank fallback. Configure
-`GEMINI_API_KEY` and `GROK_API_KEY` (or `XAI_API_KEY`) for generated quizzes.
-The AI tutor continues to use `AI_PROVIDER` (`gemini` by default) and Groq
-fallback when `GROQ_API_KEY` is configured. You can override `GEMINI_MODEL`,
-`GROK_MODEL`, `GROQ_MODEL`, and `VITE_API_URL` for a non-local API host.
+JPA schema updates. AI keys are used only by the backend. Tutor replies, study
+plans, quizzes, coding assistance, and AI interview
+generation share the same provider order. The default is Groq first, then
+OpenRouter; `openrouter/free` routes to available free models. Gemini is not
+enabled or called by default. If the configured AI providers cannot generate
+enough quiz questions, the quiz uses the question-bank fallback. Configure
+`GROQ_API_KEY` and `OPENROUTER_API_KEY`; model names can be overridden with
+`GROQ_MODEL` and `OPENROUTER_MODEL`. You can configure provider selection with
+`AI_PROVIDER`, `AI_ENABLED_PROVIDERS`, and `AI_FALLBACK_PROVIDERS`. Gemini can
+only be used if explicitly included in `AI_ENABLED_PROVIDERS`. Provider
+endpoints can optionally be overridden with `GROQ_API_URL`,
+`OPENROUTER_API_URL`, and `GEMINI_API_URL`.
 
 AI Interview uses the configured AI provider for resume-aware questions and
 end-of-session coaching. Set `AI_INTERVIEW_ADMIN_EMAIL` to the administrator
@@ -108,7 +116,8 @@ depend on the browser and operating system, and another installed voice can be
 selected in the interview.
 
 Answer audio is buffered temporarily in the browser and sent for transcription
-only after the candidate stops recording. Set `GROQ_API_KEY` to enable the
+only after the candidate stops recording. Set `GROQ_API_KEY` and keep `groq` in
+`AI_ENABLED_PROVIDERS` to enable the
 Groq Whisper transcription service (`GROQ_TRANSCRIPTION_MODEL` defaults to
 `whisper-large-v3-turbo`). Choose the answer language before recording. If the
 service is unavailable, browser speech recognition is used as a fallback and

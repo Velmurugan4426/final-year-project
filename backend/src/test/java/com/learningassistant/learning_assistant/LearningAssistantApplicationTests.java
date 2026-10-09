@@ -8,8 +8,11 @@ import org.springframework.boot.test.context.SpringBootTest;
 		"spring.datasource.username=sa",
 		"spring.datasource.password=",
 		"gemini.api-key=",
-		"grok.api-key=",
 		"groq.api-key=",
+		"openrouter.api-key=",
+		"ai.provider=groq",
+		"ai.enabled-providers=groq,openrouter",
+		"ai.fallback-providers=openrouter",
 		"app.jwt.secret=test-only-secret-with-at-least-32-characters"
 })
 class LearningAssistantApplicationTests {
