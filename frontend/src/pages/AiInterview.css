@@ -1084,6 +1084,21 @@
     line-height: 1.65;
 }
 
+.interview-answer-feedback {
+    padding: 12px 14px;
+    margin: -5px 0 17px;
+    border: 1px solid #cfe8d9;
+    border-radius: 9px;
+    color: #245c3e;
+    background: #f2faf5;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.interview-answer-feedback p {
+    margin: 5px 0 0;
+}
+
 .interview-answer-actions {
     justify-content: flex-end;
     gap: 8px;

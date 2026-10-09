@@ -22,6 +22,6 @@ public record InterviewSessionResponse(
         long durationSeconds,
         LocalDateTime completedAt
 ) {
-    public record Turn(String question, String answer) {
+    public record Turn(String question, String answer, String feedback, String status) {
     }
 }

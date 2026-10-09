@@ -25,8 +25,17 @@ import QRCode from "qrcode";
 import "./AiInterview.css";
 import { getAuthToken } from "../utils/authSession";
 import { fetchWithTimeout } from "../utils/apiRequest";
+import { calculateAudioRms, createVoiceActivityDetector } from "../utils/voiceActivity";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
+const NO_SPEECH_TIMEOUT_MS = Math.min(
+    60_000,
+    Math.max(5_000, Number(import.meta.env.VITE_INTERVIEW_NO_SPEECH_TIMEOUT_MS) || 15_000)
+);
+const END_OF_SPEECH_SILENCE_MS = Math.min(
+    5_000,
+    Math.max(600, Number(import.meta.env.VITE_INTERVIEW_END_SILENCE_MS) || 1_400)
+);
 async function interviewRequest(path, options = {}) {
     const token = getAuthToken();
     const { timeoutMs = 30_000, ...fetchOptions } = options;
@@ -196,6 +205,7 @@ export default function AiInterview() {
 
     const videoRef = useRef(null);
     const streamRef = useRef(null);
+    const sessionRef = useRef(null);
     const timerDeadlineRef = useRef(0);
     const answerSubmittingRef = useRef(false);
     const recognitionRef = useRef(null);
@@ -209,6 +219,10 @@ export default function AiInterview() {
     const voiceStopResolveRef = useRef(null);
     const voiceStopTimeoutRef = useRef(null);
     const discardRecordingRef = useRef(false);
+    const voiceAutoSubmitRef = useRef(false);
+    const voiceSpeechDetectedRef = useRef(false);
+    const voiceActivityIntervalRef = useRef(null);
+    const audioContextRef = useRef(null);
     const speechRef = useRef(null);
     const activeMonitoringRef = useRef(false);
     const terminationHandledRef = useRef(false);
@@ -226,6 +240,7 @@ export default function AiInterview() {
     const sessionId = session?.id;
     const sessionStatus = session?.status;
     const currentQuestion = session?.currentQuestion;
+    sessionRef.current = session;
 
     const updateHistory = useCallback((updatedSession) => {
         if (!updatedSession?.id) return;
@@ -315,6 +330,9 @@ export default function AiInterview() {
     const stopInterviewMedia = useCallback(() => {
         activeMonitoringRef.current = false;
         voiceCaptureActiveRef.current = false;
+        window.clearInterval(voiceActivityIntervalRef.current);
+        void audioContextRef.current?.close();
+        audioContextRef.current = null;
         discardRecordingRef.current = true;
         window.clearTimeout(voiceRestartTimeoutRef.current);
         if (mediaRecorderRef.current?.state === "recording") {
@@ -336,6 +354,14 @@ export default function AiInterview() {
 
     const applySessionResponse = useCallback((updatedSession) => {
         if (!updatedSession) return;
+        const currentSession = sessionRef.current;
+        if (currentSession?.id === updatedSession.id
+                && ((updatedSession.transcript?.length || 0) < (currentSession.transcript?.length || 0)
+                    || (!isInterviewActive(currentSession.status)
+                        && isInterviewActive(updatedSession.status)))) {
+            return;
+        }
+        sessionRef.current = updatedSession;
         setSession((current) => {
             if (current && !isInterviewActive(current.status) && isInterviewActive(updatedSession.status)) {
                 return current;
@@ -562,6 +588,12 @@ export default function AiInterview() {
         activeMonitoringRef.current = false;
         if (detectionIntervalRef.current) {
             window.clearInterval(detectionIntervalRef.current);
+        }
+        window.clearInterval(voiceActivityIntervalRef.current);
+        window.clearTimeout(voiceRestartTimeoutRef.current);
+        if (audioContextRef.current) {
+            void audioContextRef.current.close();
+            audioContextRef.current = null;
         }
         if (streamRef.current) {
             streamRef.current.getTracks().forEach((track) => track.stop());
@@ -872,60 +904,93 @@ export default function AiInterview() {
         }
     }, [enableDevices, requestFullscreen, session, stopDevices]);
 
+    const progressInterview = useCallback(async ({ answer: submittedAnswer, skipped = false } = {}) => {
+        if (answerSubmittingRef.current || !session
+                || !isInterviewActive(session.status) || remainingSeconds <= 0) return false;
+        if (!skipped && !submittedAnswer?.trim()) {
+            setAlert("No speech was recognized. Select Answer by voice and try again.");
+            return false;
+        }
+        answerSubmittingRef.current = true;
+        setBusy(true);
+        setAlert("");
+        try {
+            const result = await interviewRequest(
+                skipped
+                    ? `/api/ai-interview/sessions/${session.id}/skip`
+                    : `/api/ai-interview/sessions/${session.id}/answers`,
+                {
+                    method: "POST",
+                    timeoutMs: 120_000,
+                    ...(skipped ? {} : { body: JSON.stringify({ answer: submittedAnswer.trim() }) })
+                }
+            );
+            applySessionResponse(result);
+            answerRef.current = "";
+            setAnswer("");
+            return true;
+        } catch (error) {
+            setAlert(error.name === "TimeoutError"
+                ? "The interviewer is taking longer than expected. Your transcript remains on this page; retry when the connection is ready."
+                : error.message);
+            return false;
+        } finally {
+            answerSubmittingRef.current = false;
+            setBusy(false);
+        }
+    }, [applySessionResponse, remainingSeconds, session]);
+
+    const skipQuestion = useCallback(async () => {
+        if (answerSubmittingRef.current || busy || recordingVoice) return;
+        voiceCaptureActiveRef.current = false;
+        voiceAutoSubmitRef.current = false;
+        window.clearInterval(voiceActivityIntervalRef.current);
+        if (audioContextRef.current) {
+            void audioContextRef.current.close();
+            audioContextRef.current = null;
+        }
+        if (mediaRecorderRef.current?.state === "recording") {
+            discardRecordingRef.current = true;
+            mediaRecorderRef.current.stop();
+        }
+        recognitionRef.current?.stop();
+        recognitionRef.current = null;
+        setRecordingVoice(false);
+        await progressInterview({ skipped: true });
+    }, [busy, progressInterview, recordingVoice]);
+
     const submitAnswer = useCallback(async (event) => {
         event.preventDefault();
         if (answerSubmittingRef.current || busy || !session
                 || !isInterviewActive(session.status) || remainingSeconds <= 0
                 || !answerRef.current.trim()) return;
-        answerSubmittingRef.current = true;
-        setBusy(true);
-        setAlert("");
-        try {
-            voiceCaptureActiveRef.current = false;
-            window.clearTimeout(voiceRestartTimeoutRef.current);
-            const activeRecognition = recognitionRef.current;
-            if (activeRecognition) {
-                const recognitionStopped = new Promise((resolve) => {
-                    voiceStopResolveRef.current = resolve;
-                    voiceStopTimeoutRef.current = window.setTimeout(() => {
-                        voiceStopResolveRef.current?.();
-                        voiceStopResolveRef.current = null;
-                        voiceStopTimeoutRef.current = null;
-                    }, 800);
-                });
-                try {
-                    activeRecognition.stop();
-                } catch (error) {
-                    window.clearTimeout(voiceStopTimeoutRef.current);
-                    voiceStopTimeoutRef.current = null;
+        voiceCaptureActiveRef.current = false;
+        window.clearTimeout(voiceRestartTimeoutRef.current);
+        const activeRecognition = recognitionRef.current;
+        if (activeRecognition) {
+            const recognitionStopped = new Promise((resolve) => {
+                voiceStopResolveRef.current = resolve;
+                voiceStopTimeoutRef.current = window.setTimeout(() => {
                     voiceStopResolveRef.current?.();
                     voiceStopResolveRef.current = null;
-                    setAlert(`Voice input could not stop cleanly: ${error.message}`);
-                }
-                await recognitionStopped;
-            }
-            recognitionRef.current = null;
-            setRecordingVoice(false);
-            const spokenAnswer = answerRef.current.trim();
-            if (!spokenAnswer) {
-                setAlert("No speech was recognized. Select Answer by voice and try again.");
-                return;
-            }
-            const result = await interviewRequest(`/api/ai-interview/sessions/${session.id}/answers`, {
-                method: "POST",
-                timeoutMs: 120_000,
-                body: JSON.stringify({ answer: spokenAnswer })
+                    voiceStopTimeoutRef.current = null;
+                }, 800);
             });
-            applySessionResponse(result);
-            answerRef.current = "";
-            setAnswer("");
-        } catch (error) {
-            setAlert(error.message);
-        } finally {
-            answerSubmittingRef.current = false;
-            setBusy(false);
+            try {
+                activeRecognition.stop();
+            } catch (error) {
+                window.clearTimeout(voiceStopTimeoutRef.current);
+                voiceStopTimeoutRef.current = null;
+                voiceStopResolveRef.current?.();
+                voiceStopResolveRef.current = null;
+                setAlert(`Voice input could not stop cleanly: ${error.message}`);
+            }
+            await recognitionStopped;
         }
-    }, [applySessionResponse, busy, remainingSeconds, session]);
+        recognitionRef.current = null;
+        setRecordingVoice(false);
+        await progressInterview({ answer: answerRef.current });
+    }, [busy, progressInterview, remainingSeconds, session]);
 
     const uploadResume = useCallback(async () => {
         if (!resumeFile) {
@@ -1208,6 +1273,8 @@ export default function AiInterview() {
         voiceFinalTranscriptRef.current = "";
         answerRef.current = "";
         voiceRecognitionErrorRef.current = "";
+        voiceSpeechDetectedRef.current = false;
+        voiceAutoSubmitRef.current = false;
         audioChunksRef.current = [];
         voiceCaptureActiveRef.current = true;
         mediaRecorderRef.current = recorder;
@@ -1220,14 +1287,41 @@ export default function AiInterview() {
         };
         recorder.onerror = (event) => {
             voiceCaptureActiveRef.current = false;
+            window.clearInterval(voiceActivityIntervalRef.current);
+            window.clearTimeout(voiceRestartTimeoutRef.current);
+            if (audioContextRef.current) {
+                void audioContextRef.current.close();
+                audioContextRef.current = null;
+            }
+            recognitionRef.current?.stop();
+            recognitionRef.current = null;
+            mediaRecorderRef.current = null;
+            audioChunksRef.current = [];
             setRecordingVoice(false);
+            setBusy(false);
             setAlert(`Audio recording failed: ${event.error?.message || "Unknown recording error."}`);
         };
         recorder.onstop = async () => {
+            const autoSubmit = voiceAutoSubmitRef.current;
+            voiceCaptureActiveRef.current = false;
+            window.clearTimeout(voiceRestartTimeoutRef.current);
+            window.clearInterval(voiceActivityIntervalRef.current);
+            if (audioContextRef.current) {
+                void audioContextRef.current.close();
+                audioContextRef.current = null;
+            }
             if (discardRecordingRef.current) {
                 discardRecordingRef.current = false;
                 audioChunksRef.current = [];
                 mediaRecorderRef.current = null;
+                return;
+            }
+            if (!voiceSpeechDetectedRef.current) {
+                audioChunksRef.current = [];
+                mediaRecorderRef.current = null;
+                setRecordingVoice(false);
+                setBusy(false);
+                setAlert("No speech was detected. Silence was not submitted as an answer.");
                 return;
             }
             setRecordingVoice(false);
@@ -1272,7 +1366,11 @@ export default function AiInterview() {
                 );
                 answerRef.current = result.transcript;
                 setAnswer(result.transcript);
-                setAlert(`Transcribed with ${result.provider}. Review the transcript before submitting.`);
+                if (autoSubmit) {
+                    await progressInterview({ answer: result.transcript });
+                } else {
+                    setAlert(`Transcribed with ${result.provider}. Review the transcript before submitting.`);
+                }
             } catch (error) {
                 const fallbackTranscript = voiceFinalTranscriptRef.current.trim();
                 if (!fallbackTranscript) {
@@ -1284,7 +1382,11 @@ export default function AiInterview() {
                 const recognitionNote = voiceRecognitionErrorRef.current
                     ? ` Browser recognition also reported: ${voiceRecognitionErrorRef.current}`
                     : "";
-                setAlert(`High-accuracy transcription was unavailable. Using browser speech recognition instead. ${error.message}${recognitionNote}`);
+                if (autoSubmit) {
+                    await progressInterview({ answer: fallbackTranscript });
+                } else {
+                    setAlert(`High-accuracy transcription was unavailable. Using browser speech recognition instead. ${error.message}${recognitionNote}`);
+                }
             } finally {
                 setBusy(false);
             }
@@ -1374,20 +1476,90 @@ export default function AiInterview() {
         };
 
         try {
+            const AudioContextType = window.AudioContext || window.webkitAudioContext;
+            if (!AudioContextType) {
+                throw new Error("Voice activity detection is not supported in this browser. Use a current version of Chrome or Edge.");
+            }
+            const audioContext = new AudioContextType();
+            const analyser = audioContext.createAnalyser();
+            analyser.fftSize = 512;
+            audioContext.createMediaStreamSource(new MediaStream([audioTrack])).connect(analyser);
+            audioContextRef.current = audioContext;
+            void audioContext.resume().catch((error) => {
+                setAlert(`The microphone activity detector could not start: ${error.message}`);
+            });
+            const activityDetector = createVoiceActivityDetector({
+                noSpeechTimeoutMs: NO_SPEECH_TIMEOUT_MS,
+                endSilenceMs: END_OF_SPEECH_SILENCE_MS
+            });
             discardRecordingRef.current = false;
             recorder.start(1000);
             startRecognition();
+            const samples = new Uint8Array(analyser.fftSize);
+            voiceActivityIntervalRef.current = window.setInterval(() => {
+                if (!voiceCaptureActiveRef.current || audioContextRef.current !== audioContext) return;
+                analyser.getByteTimeDomainData(samples);
+                const activity = activityDetector.update(calculateAudioRms(samples));
+                if (activity.speechDetected) {
+                    voiceSpeechDetectedRef.current = true;
+                }
+                if (activity.noSpeechTimedOut) {
+                    voiceCaptureActiveRef.current = false;
+                    voiceAutoSubmitRef.current = false;
+                    discardRecordingRef.current = true;
+                    window.clearInterval(voiceActivityIntervalRef.current);
+                    window.clearTimeout(voiceRestartTimeoutRef.current);
+                    recognitionRef.current?.stop();
+                    recognitionRef.current = null;
+                    if (recorder.state === "recording") recorder.stop();
+                    setRecordingVoice(false);
+                    setAlert("No speech was detected. Moving to the next question.");
+                    void progressInterview({ skipped: true });
+                    return;
+                }
+                if (activity.speechEnded) {
+                    voiceAutoSubmitRef.current = true;
+                    voiceCaptureActiveRef.current = false;
+                    window.clearInterval(voiceActivityIntervalRef.current);
+                    window.clearTimeout(voiceRestartTimeoutRef.current);
+                    recognitionRef.current?.stop();
+                    if (recorder.state === "recording") recorder.stop();
+                }
+            }, 50);
         } catch (error) {
             voiceCaptureActiveRef.current = false;
             mediaRecorderRef.current = null;
+            window.clearInterval(voiceActivityIntervalRef.current);
+            if (audioContextRef.current) {
+                void audioContextRef.current.close();
+                audioContextRef.current = null;
+            }
             setRecordingVoice(false);
             setAlert(`Voice recording could not start: ${error.message}`);
         }
-    }, [sessionId, transcriptionLanguage]);
+    }, [progressInterview, sessionId, transcriptionLanguage]);
 
     const stopVoiceAnswer = useCallback(() => {
         voiceCaptureActiveRef.current = false;
         window.clearTimeout(voiceRestartTimeoutRef.current);
+        window.clearInterval(voiceActivityIntervalRef.current);
+        if (!voiceSpeechDetectedRef.current) {
+            discardRecordingRef.current = true;
+            if (audioContextRef.current) {
+                void audioContextRef.current.close();
+                audioContextRef.current = null;
+            }
+            recognitionRef.current?.stop();
+            recognitionRef.current = null;
+            if (mediaRecorderRef.current?.state === "recording") mediaRecorderRef.current.stop();
+            setRecordingVoice(false);
+            setAlert("No speech was detected. Silence was not submitted as an answer.");
+            return;
+        }
+        if (audioContextRef.current) {
+            void audioContextRef.current.close();
+            audioContextRef.current = null;
+        }
         if (mediaRecorderRef.current?.state === "recording") {
             mediaRecorderRef.current.stop();
         }
@@ -1396,6 +1568,8 @@ export default function AiInterview() {
     const sessionIsActive = isInterviewActive(session?.status);
     const isLive = sessionIsActive && cameraOn && microphoneOn;
     const assessment = parseAssessment(session?.feedback);
+    const latestAnswerFeedback = session?.transcript?.slice().reverse()
+        .find((turn) => turn.feedback && turn.status === "ANSWERED");
 
     if (loading) {
         return (
@@ -1776,6 +1950,12 @@ export default function AiInterview() {
                                     </div>
                                 </div>
                                 <p className="interview-question-text">{session.currentQuestion}</p>
+                                {latestAnswerFeedback && (
+                                    <div className="interview-answer-feedback" role="status">
+                                        <strong>Feedback on your previous answer</strong>
+                                        <p>{latestAnswerFeedback.feedback}</p>
+                                    </div>
+                                )}
                                 <form onSubmit={submitAnswer}>
                                     <label className="interview-field">
                                         Your spoken answer
@@ -1808,13 +1988,21 @@ export default function AiInterview() {
                                             {busy ? <LoaderCircle className="interview-spinner" size={15} /> : <ArrowRight size={15} />}
                                             Submit answer
                                         </button>
+                                        <button
+                                            className="interview-secondary-button"
+                                            type="button"
+                                            disabled={busy || recordingVoice || !sessionIsActive || remainingSeconds <= 0}
+                                            onClick={() => void skipQuestion()}
+                                        >
+                                            Skip question
+                                        </button>
                                     </div>
                                     <p className="interview-speech-note" role="status" aria-live="polite">
                                         {questionSpeaking
                                             ? "Listen to the question before answering. The microphone stays off while it is being read."
                                             : recordingVoice
-                                                ? "Recording your answer. Speak clearly, then stop to transcribe it. Audio is sent securely for transcription and is not stored by this application."
-                                                : "Answers are voice-only. Review the transcript before submitting. Groq Whisper is used when configured; browser recognition is the fallback."}
+                                                ? `Listening for speech. Silence for ${Math.round(NO_SPEECH_TIMEOUT_MS / 1000)} seconds skips the question; ${Math.round(END_OF_SPEECH_SILENCE_MS / 1000)} seconds of silence after speech ends recording.`
+                                                : "Answers are voice-only. Recording stops automatically when you finish speaking. Silence will skip the question; review the transcript before submitting. Audio is sent for transcription and is not stored by this application."}
                                     </p>
                                 </form>
                             </section>
@@ -1850,6 +2038,7 @@ export default function AiInterview() {
                                     <article className="interview-transcript-turn" key={`${session.id}-${index}`}>
                                         <strong>Question {index + 1}: {turn.question}</strong>
                                         <p>{turn.answer || "No answer was submitted before the interview ended."}</p>
+                                        {turn.feedback && <p><strong>Answer feedback:</strong> {turn.feedback}</p>}
                                     </article>
                                 ))}
                             </section>

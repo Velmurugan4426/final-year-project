@@ -58,6 +58,24 @@ public class InterviewSessionSchemaMigration implements ApplicationRunner {
                     );
                 }
             }
+
+            try (var turnStatusColumns = connection.getMetaData()
+                    .getColumns(connection.getCatalog(), null, "interview_session_turns", "turn_status")) {
+                if (!turnStatusColumns.next()) {
+                    jdbcTemplate.execute(
+                            "ALTER TABLE interview_session_turns ADD COLUMN turn_status VARCHAR(20) NOT NULL DEFAULT 'PENDING'"
+                    );
+                }
+            }
+
+            try (var feedbackColumns = connection.getMetaData()
+                    .getColumns(connection.getCatalog(), null, "interview_session_turns", "answer_feedback")) {
+                if (!feedbackColumns.next()) {
+                    jdbcTemplate.execute(
+                            "ALTER TABLE interview_session_turns ADD COLUMN answer_feedback TEXT"
+                    );
+                }
+            }
         }
     }
 }

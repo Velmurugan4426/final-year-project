@@ -19,6 +19,7 @@ import jakarta.persistence.Table;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 @Entity
 @Table(name = "interview_sessions", indexes = {
@@ -155,7 +156,7 @@ public class InterviewSession {
     }
 
     public int getQuestionCount() {
-        return questionCount == null ? 0 : questionCount;
+        return Objects.requireNonNullElse(questionCount, 0);
     }
 
     public void setQuestionCount(int questionCount) {
@@ -239,6 +240,12 @@ public class InterviewSession {
         @Column(name = "answer_text", columnDefinition = "text")
         private String answer;
 
+        @Column(name = "answer_feedback", columnDefinition = "text")
+        private String feedback;
+
+        @Column(name = "turn_status", nullable = false, length = 20)
+        private String status = "PENDING";
+
         protected Turn() {
         }
 
@@ -261,6 +268,22 @@ public class InterviewSession {
 
         public void setAnswer(String answer) {
             this.answer = answer;
+        }
+
+        public String getFeedback() {
+            return feedback;
+        }
+
+        public void setFeedback(String feedback) {
+            this.feedback = feedback;
+        }
+
+        public String getStatus() {
+            return status == null ? "PENDING" : status;
+        }
+
+        public void setStatus(String status) {
+            this.status = status;
         }
     }
 
