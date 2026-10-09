@@ -31,9 +31,8 @@ $env:GROQ_API_KEY = "<your Groq API key, for the AI tutor>"
 $env:AI_PROVIDER = "gemini"
 $env:JWT_SECRET = "<a random secret of at least 32 characters>"
 $env:AI_INTERVIEW_ADMIN_EMAIL = "velmurugan808k@gmail.com"
-$env:RAZORPAY_KEY_ID = "<Razorpay key ID>"
-$env:RAZORPAY_KEY_SECRET = "<Razorpay key secret>"
-$env:AI_INTERVIEW_PRICE_PAISE = "29900"
+$env:AI_INTERVIEW_UPI_ID = "<your Google Pay UPI ID>"
+$env:AI_INTERVIEW_UPI_PAYEE_NAME = "<name shown to the payer>"
 ```
 
 The database `ai_learning_assistant` must exist in PostgreSQL. Set `DB_PASSWORD`
@@ -53,13 +52,16 @@ AI Interview uses the configured AI provider for resume-aware questions and
 end-of-session coaching. Set `AI_INTERVIEW_ADMIN_EMAIL` to the administrator
 account email; only that authenticated account can issue time-limited free
 grants, search accounts by name/email, revoke admin grants without removing
-paid access, or review monitoring signals. Resume uploads over 5 MB are
-rejected before submission in the UI and return a clear payload-too-large
-response from the API. Set Razorpay test/live credentials in
-`RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET`; never expose the secret in the
-frontend. Access lasts 30 days per verified payment and defaults to INR 299;
-configure `AI_INTERVIEW_PRICE_PAISE` in paise to change the price. Payment
-orders and signatures are verified by the backend.
+paid access, review monitoring signals, or verify subscription payments.
+Resume uploads over 5 MB are rejected before submission in the UI and return a
+clear payload-too-large response from the API. Configure
+`AI_INTERVIEW_UPI_ID` on the backend before enabling subscriptions; do not put
+the UPI ID into frontend source. The app generates a local UPI QR and payment
+link for a fixed ₹1 payment. Users submit the transaction reference, and an
+administrator must verify the ₹1 credit against their own Google Pay/bank
+history and approve it before one day of access is granted. Submitting a UTR
+or a screenshot alone never grants access. Pending payments can be approved or
+rejected from the AI Interview administration panel.
 
 Resumes (PDF, max 5 MB), original file bytes, and extracted text are stored in
 PostgreSQL and can be removed by the account owner. Completed interview

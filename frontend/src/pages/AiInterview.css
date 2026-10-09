@@ -175,6 +175,119 @@
     padding: 20px;
 }
 
+.interview-payment-panel {
+    margin-bottom: 16px;
+}
+
+.interview-payment-content {
+    display: grid;
+    grid-template-columns: 240px minmax(0, 1fr);
+    align-items: start;
+    gap: 22px;
+}
+
+.interview-payment-qr {
+    display: grid;
+    justify-items: center;
+    gap: 8px;
+    min-height: 240px;
+    padding: 12px;
+    border: 1px solid #e6eaf1;
+    border-radius: 10px;
+    color: #7d8797;
+    background: #fbfcff;
+    text-align: center;
+    font-size: 11px;
+}
+
+.interview-payment-qr img {
+    width: 216px;
+    height: 216px;
+    image-rendering: pixelated;
+}
+
+.interview-payment-details > p,
+.interview-payment-status {
+    margin-bottom: 10px;
+    color: #5f6c80;
+    font-size: 12px;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+}
+
+.interview-payment-details code,
+.interview-payment-status code {
+    color: #35476a;
+    font-size: 11px;
+    overflow-wrap: anywhere;
+}
+
+.interview-upi-link {
+    display: inline-flex;
+    text-decoration: none;
+    margin: 3px 0 15px;
+}
+
+.interview-payment-submit {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+    gap: 10px;
+    margin: 8px 0 12px;
+}
+
+.interview-payment-disclaimer {
+    display: block;
+    color: #7b8798;
+    font-size: 10px;
+    line-height: 1.55;
+}
+
+.interview-admin-payment-heading {
+    margin-top: 24px;
+}
+
+.interview-admin-payment {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 6px 14px;
+    padding: 12px 0;
+    border-top: 1px solid #edf0f5;
+}
+
+.interview-admin-payment > div:first-child {
+    display: grid;
+    gap: 5px;
+    min-width: 0;
+    font-size: 11px;
+    overflow-wrap: anywhere;
+}
+
+.interview-admin-payment > div:first-child > span {
+    color: #5f6e84;
+}
+
+.interview-admin-payment > div:first-child > small {
+    color: #808b9b;
+}
+
+.interview-admin-payment-actions {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+}
+
+.interview-admin-payment-actions .interview-primary-button,
+.interview-admin-payment-actions .interview-secondary-button {
+    min-height: 32px;
+    padding: 0 10px;
+    font-size: 10px;
+}
+
+.interview-admin-payment > .interview-payment-disclaimer {
+    grid-column: 1 / -1;
+}
+
 .interview-panel-title {
     align-items: flex-start;
     gap: 11px;
@@ -1312,6 +1425,23 @@
 }
 
 @media (max-width: 600px) {
+    .interview-payment-content,
+    .interview-payment-submit {
+        grid-template-columns: 1fr;
+    }
+
+    .interview-payment-qr {
+        width: 100%;
+    }
+
+    .interview-admin-payment {
+        grid-template-columns: 1fr;
+    }
+
+    .interview-admin-payment-actions {
+        justify-content: flex-start;
+    }
+
     .interview-admin-search {
         align-items: stretch;
         flex-direction: column;

@@ -7,6 +7,7 @@ import com.learningassistant.learning_assistant.entity.InterviewAccess;
 import com.learningassistant.learning_assistant.entity.InterviewResume;
 import com.learningassistant.learning_assistant.entity.InterviewSession;
 import com.learningassistant.learning_assistant.entity.User;
+import com.learningassistant.learning_assistant.repository.InterviewManualPaymentRepository;
 import com.learningassistant.learning_assistant.repository.InterviewAccessRepository;
 import com.learningassistant.learning_assistant.repository.InterviewResumeRepository;
 import com.learningassistant.learning_assistant.repository.InterviewSessionRepository;
@@ -23,6 +24,7 @@ import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.UUID;
+import java.time.Duration;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -41,10 +43,13 @@ import static org.mockito.Mockito.verify;
         "spring.datasource.password=",
         "spring.datasource.driver-class-name=org.h2.Driver",
         "spring.jpa.hibernate.ddl-auto=create-drop",
+        "ai-interview.price-paise=100",
         "gemini.api-key=",
         "grok.api-key=",
         "groq.api-key=",
         "ai-interview.admin-email=proctor-admin@example.com",
+        "ai-interview.upi-id=owner@okaxis",
+        "ai-interview.upi-payee-name=Interview Owner",
         "app.jwt.secret=test-only-secret-with-at-least-32-characters"
 })
 class InterviewProctoringIntegrationTests {
@@ -65,6 +70,9 @@ class InterviewProctoringIntegrationTests {
     private InterviewResumeRepository resumeRepository;
 
     @Autowired
+    private InterviewManualPaymentRepository manualPaymentRepository;
+
+    @Autowired
     private JwtService jwtService;
 
     @MockitoBean
@@ -78,6 +86,7 @@ class InterviewProctoringIntegrationTests {
                 "test-password"
         ));
         String authorization = "Bearer " + jwtService.generateToken(user.getEmail());
+        assertEquals(100, interviewService.getAccess(authorization).pricePaise());
 
         InterviewSession phoneSession = createSession(user);
         var phoneResult = interviewService.addFlag(
@@ -295,6 +304,100 @@ class InterviewProctoringIntegrationTests {
         assertTrue(completed.feedback().contains("NEEDS_IMPROVEMENT"));
         assertTrue(completed.feedback().contains("Practice system design scenarios."));
         assertEquals(2, completed.transcript().size());
+    }
+
+    @Test
+    void manualUpiPaymentRequiresAdminVerificationAndGrantsExactlyOneDay() {
+        User learner = userRepository.save(new User(
+                "UPI learner",
+                "upi-learner-" + UUID.randomUUID() + "@example.com",
+                "test-password"
+        ));
+        User admin = userRepository.findByEmail("proctor-admin@example.com")
+                .orElseGet(() -> userRepository.save(new User(
+                        "UPI admin",
+                        "proctor-admin@example.com",
+                        "test-password"
+                )));
+        String learnerAuthorization = "Bearer " + jwtService.generateToken(learner.getEmail());
+        String adminAuthorization = "Bearer " + jwtService.generateToken(admin.getEmail());
+
+        var payment = interviewService.createManualPayment(learnerAuthorization);
+        assertEquals(100, payment.amountPaise());
+        assertEquals("owner@okaxis", payment.upiId());
+        assertEquals("CREATED", payment.status());
+
+        var submitted = interviewService.submitManualPayment(
+                learnerAuthorization,
+                payment.paymentReference(),
+                new com.learningassistant.learning_assistant.dto.InterviewManualPaymentRequest("123456789012")
+        );
+        assertEquals("PENDING", submitted.status());
+        assertTrue(!interviewService.getAccess(learnerAuthorization).hasAccess());
+        assertEquals(1, interviewService.pendingManualPayments(adminAuthorization).size());
+        ResponseStatusException forbidden = assertThrows(
+                ResponseStatusException.class,
+                () -> interviewService.pendingManualPayments(learnerAuthorization)
+        );
+        assertEquals(HttpStatus.FORBIDDEN, forbidden.getStatusCode());
+
+        var approved = interviewService.approveManualPayment(adminAuthorization, payment.id());
+        assertEquals("APPROVED", approved.status());
+        var access = interviewService.getAccess(learnerAuthorization);
+        assertTrue(access.hasAccess());
+        assertEquals("PAID_ACCESS", access.accessSource());
+        long remainingSeconds = Duration.between(java.time.LocalDateTime.now(), access.expiresAt()).toSeconds();
+        assertTrue(remainingSeconds > 86_380 && remainingSeconds <= 86_400);
+
+        ResponseStatusException duplicateApproval = assertThrows(
+                ResponseStatusException.class,
+                () -> interviewService.approveManualPayment(adminAuthorization, payment.id())
+        );
+        assertEquals(HttpStatus.CONFLICT, duplicateApproval.getStatusCode());
+    }
+
+    @Test
+    void duplicateUtrIsRejectedAndAdminRejectionNeverGrantsAccess() {
+        User learner = userRepository.save(new User(
+                "UPI retry learner",
+                "upi-retry-" + UUID.randomUUID() + "@example.com",
+                "test-password"
+        ));
+        User secondLearner = userRepository.save(new User(
+                "UPI second learner",
+                "upi-second-" + UUID.randomUUID() + "@example.com",
+                "test-password"
+        ));
+        User admin = userRepository.findByEmail("proctor-admin@example.com")
+                .orElseGet(() -> userRepository.save(new User(
+                        "UPI admin rejection",
+                        "proctor-admin@example.com",
+                        "test-password"
+                )));
+        String learnerAuthorization = "Bearer " + jwtService.generateToken(learner.getEmail());
+        String secondAuthorization = "Bearer " + jwtService.generateToken(secondLearner.getEmail());
+        String adminAuthorization = "Bearer " + jwtService.generateToken(admin.getEmail());
+        var firstPayment = interviewService.createManualPayment(learnerAuthorization);
+        interviewService.submitManualPayment(
+                learnerAuthorization,
+                firstPayment.paymentReference(),
+                new com.learningassistant.learning_assistant.dto.InterviewManualPaymentRequest("Abc123456789")
+        );
+
+        var duplicatePayment = interviewService.createManualPayment(secondAuthorization);
+        ResponseStatusException duplicateUtr = assertThrows(
+                ResponseStatusException.class,
+                () -> interviewService.submitManualPayment(
+                        secondAuthorization,
+                        duplicatePayment.paymentReference(),
+                        new com.learningassistant.learning_assistant.dto.InterviewManualPaymentRequest("abc123456789")
+                )
+        );
+        assertEquals(HttpStatus.CONFLICT, duplicateUtr.getStatusCode());
+
+        interviewService.rejectManualPayment(adminAuthorization, firstPayment.id());
+        assertEquals("REJECTED", manualPaymentRepository.findById(firstPayment.id()).orElseThrow().getStatus());
+        assertTrue(!interviewService.getAccess(learnerAuthorization).hasAccess());
     }
 
     private InterviewSession createSession(User user) {

@@ -58,6 +58,30 @@ public class InterviewController {
         return interviewService.verifyOrder(authorization, request);
     }
 
+    @PostMapping("/manual-payments")
+    @ResponseStatus(HttpStatus.CREATED)
+    public InterviewManualPaymentResponse createManualPayment(
+            @RequestHeader(value = "Authorization", required = false) String authorization
+    ) {
+        return interviewService.createManualPayment(authorization);
+    }
+
+    @GetMapping("/manual-payments/mine")
+    public List<InterviewManualPaymentResponse> manualPaymentsForUser(
+            @RequestHeader(value = "Authorization", required = false) String authorization
+    ) {
+        return interviewService.manualPaymentsForUser(authorization);
+    }
+
+    @PostMapping("/manual-payments/{paymentReference}/submit")
+    public InterviewManualPaymentResponse submitManualPayment(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @PathVariable String paymentReference,
+            @RequestBody InterviewManualPaymentRequest request
+    ) {
+        return interviewService.submitManualPayment(authorization, paymentReference, request);
+    }
+
     @GetMapping("/sessions")
     public List<InterviewSessionResponse> sessions(
             @RequestHeader(value = "Authorization", required = false) String authorization
@@ -147,5 +171,28 @@ public class InterviewController {
             @RequestHeader(value = "Authorization", required = false) String authorization
     ) {
         return interviewService.adminReports(authorization);
+    }
+
+    @GetMapping("/admin/manual-payments")
+    public List<InterviewAdminManualPaymentResponse> pendingManualPayments(
+            @RequestHeader(value = "Authorization", required = false) String authorization
+    ) {
+        return interviewService.pendingManualPayments(authorization);
+    }
+
+    @PostMapping("/admin/manual-payments/{paymentId}/approve")
+    public InterviewAdminManualPaymentResponse approveManualPayment(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @PathVariable Long paymentId
+    ) {
+        return interviewService.approveManualPayment(authorization, paymentId);
+    }
+
+    @PostMapping("/admin/manual-payments/{paymentId}/reject")
+    public InterviewAdminManualPaymentResponse rejectManualPayment(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @PathVariable Long paymentId
+    ) {
+        return interviewService.rejectManualPayment(authorization, paymentId);
     }
 }

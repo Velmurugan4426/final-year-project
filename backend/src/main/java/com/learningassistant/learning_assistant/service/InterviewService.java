@@ -5,10 +5,13 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.learningassistant.learning_assistant.dto.InterviewAccessResponse;
 import com.learningassistant.learning_assistant.dto.InterviewAdminReportResponse;
+import com.learningassistant.learning_assistant.dto.InterviewAdminManualPaymentResponse;
 import com.learningassistant.learning_assistant.dto.InterviewAdminUserResponse;
 import com.learningassistant.learning_assistant.dto.InterviewAnswerRequest;
 import com.learningassistant.learning_assistant.dto.InterviewFlagRequest;
 import com.learningassistant.learning_assistant.dto.InterviewGrantRequest;
+import com.learningassistant.learning_assistant.dto.InterviewManualPaymentRequest;
+import com.learningassistant.learning_assistant.dto.InterviewManualPaymentResponse;
 import com.learningassistant.learning_assistant.dto.InterviewOrderResponse;
 import com.learningassistant.learning_assistant.dto.InterviewOrderVerifyRequest;
 import com.learningassistant.learning_assistant.dto.InterviewSessionResponse;
@@ -16,6 +19,7 @@ import com.learningassistant.learning_assistant.dto.InterviewStartRequest;
 import com.learningassistant.learning_assistant.dto.InterviewTranscriptionResponse;
 import com.learningassistant.learning_assistant.entity.InterviewAccess;
 import com.learningassistant.learning_assistant.entity.InterviewPaymentOrder;
+import com.learningassistant.learning_assistant.entity.InterviewManualPayment;
 import com.learningassistant.learning_assistant.entity.InterviewResume;
 import com.learningassistant.learning_assistant.entity.InterviewSession;
 import com.learningassistant.learning_assistant.entity.InterviewSession.MonitoringEvent;
@@ -24,6 +28,7 @@ import com.learningassistant.learning_assistant.entity.TutorMessage;
 import com.learningassistant.learning_assistant.entity.User;
 import com.learningassistant.learning_assistant.repository.InterviewAccessRepository;
 import com.learningassistant.learning_assistant.repository.InterviewPaymentOrderRepository;
+import com.learningassistant.learning_assistant.repository.InterviewManualPaymentRepository;
 import com.learningassistant.learning_assistant.repository.InterviewResumeRepository;
 import com.learningassistant.learning_assistant.repository.InterviewSessionRepository;
 import com.learningassistant.learning_assistant.repository.UserRepository;
@@ -34,6 +39,7 @@ import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.text.PDFTextStripper;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -67,6 +73,8 @@ public class InterviewService {
     private static final int MAX_TRANSCRIPTION_BYTES = 5 * 1024 * 1024;
     private static final int MAX_ANSWER_LENGTH = 12_000;
     private static final int MAX_EVENT_DETAILS_LENGTH = 500;
+    private static final int PAID_ACCESS_DURATION_DAYS = 1;
+    private static final int MANUAL_PAYMENT_AMOUNT_PAISE = 100;
     private static final List<String> ACTIVE_STATUSES = List.of("IN_PROGRESS", "ACTIVE");
     private static final Set<String> MONITORING_EVENT_TYPES = Set.of(
             "PHONE_DETECTED",
@@ -87,6 +95,7 @@ public class InterviewService {
     private final InterviewAccessRepository accessRepository;
     private final InterviewResumeRepository resumeRepository;
     private final InterviewPaymentOrderRepository paymentOrderRepository;
+    private final InterviewManualPaymentRepository manualPaymentRepository;
     private final UserRepository userRepository;
     private final JwtService jwtService;
     private final TutorModelService tutorModelService;
@@ -95,6 +104,8 @@ public class InterviewService {
     private final int pricePaise;
     private final String razorpayKeyId;
     private final String razorpayKeySecret;
+    private final String upiId;
+    private final String upiPayeeName;
     private final int interviewDurationMinutes;
     private final int heartbeatTimeoutMinutes;
 
@@ -103,6 +114,7 @@ public class InterviewService {
             InterviewAccessRepository accessRepository,
             InterviewResumeRepository resumeRepository,
             InterviewPaymentOrderRepository paymentOrderRepository,
+            InterviewManualPaymentRepository manualPaymentRepository,
             UserRepository userRepository,
             JwtService jwtService,
             TutorModelService tutorModelService,
@@ -110,6 +122,8 @@ public class InterviewService {
             @Value("${ai-interview.price-paise:29900}") int pricePaise,
             @Value("${razorpay.key-id:}") String razorpayKeyId,
             @Value("${razorpay.key-secret:}") String razorpayKeySecret,
+            @Value("${ai-interview.upi-id:}") String upiId,
+            @Value("${ai-interview.upi-payee-name:AI Interview}") String upiPayeeName,
             @Value("${ai-interview.duration-minutes:5}") int interviewDurationMinutes,
             @Value("${ai-interview.heartbeat-timeout-minutes:5}") int heartbeatTimeoutMinutes
     ) {
@@ -117,6 +131,7 @@ public class InterviewService {
         this.accessRepository = accessRepository;
         this.resumeRepository = resumeRepository;
         this.paymentOrderRepository = paymentOrderRepository;
+        this.manualPaymentRepository = manualPaymentRepository;
         this.userRepository = userRepository;
         this.jwtService = jwtService;
         this.tutorModelService = tutorModelService;
@@ -124,6 +139,10 @@ public class InterviewService {
         this.pricePaise = pricePaise;
         this.razorpayKeyId = razorpayKeyId == null ? "" : razorpayKeyId.trim();
         this.razorpayKeySecret = razorpayKeySecret == null ? "" : razorpayKeySecret.trim();
+        this.upiId = upiId == null ? "" : upiId.trim();
+        this.upiPayeeName = upiPayeeName == null || upiPayeeName.isBlank()
+                ? "AI Interview"
+                : upiPayeeName.trim();
         this.interviewDurationMinutes = Math.max(5, interviewDurationMinutes);
         this.heartbeatTimeoutMinutes = Math.max(1, heartbeatTimeoutMinutes);
     }
@@ -187,6 +206,111 @@ public class InterviewService {
     public void deleteResume(String authorization) {
         User user = authenticatedUser(authorization);
         resumeRepository.findByUserId(user.getId()).ifPresent(resumeRepository::delete);
+    }
+
+    @Transactional
+    public InterviewManualPaymentResponse createManualPayment(String authorization) {
+        User user = authenticatedUser(authorization);
+        requireUpiConfigured();
+        Optional<InterviewManualPayment> existing = manualPaymentRepository
+                .findFirstByUserIdAndStatusInOrderByCreatedAtDesc(user.getId(), List.of("CREATED", "PENDING"));
+        if (existing.isPresent()) {
+            return toManualPaymentResponse(existing.get());
+        }
+
+        InterviewManualPayment payment = new InterviewManualPayment();
+        payment.setUser(user);
+        payment.setPaymentReference(java.util.UUID.randomUUID().toString().replace("-", ""));
+        payment.setAmountPaise(MANUAL_PAYMENT_AMOUNT_PAISE);
+        payment.setStatus("CREATED");
+        return toManualPaymentResponse(manualPaymentRepository.save(payment));
+    }
+
+    @Transactional
+    public List<InterviewManualPaymentResponse> manualPaymentsForUser(String authorization) {
+        User user = authenticatedUser(authorization);
+        return manualPaymentRepository.findTop5ByUserIdOrderByCreatedAtDesc(user.getId())
+                .stream()
+                .map(this::toManualPaymentResponse)
+                .toList();
+    }
+
+    @Transactional
+    public InterviewManualPaymentResponse submitManualPayment(
+            String authorization,
+            String paymentReference,
+            InterviewManualPaymentRequest request
+    ) {
+        User user = authenticatedUser(authorization);
+        if (request == null || request.utr() == null) {
+            throw badRequest("Enter the UPI transaction reference from your payment app.");
+        }
+        String utr = request.utr().trim().replaceAll("\\s+", "").toUpperCase(Locale.ROOT);
+        if (!utr.matches("[A-Z0-9-]{6,60}")) {
+            throw badRequest("Enter a valid UPI transaction reference (6-60 letters or numbers).");
+        }
+        InterviewManualPayment payment = manualPaymentRepository
+                .findByPaymentReferenceAndUserId(paymentReference, user.getId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Payment request not found."));
+        if (!"CREATED".equals(payment.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "This payment request was already submitted or reviewed.");
+        }
+        if (manualPaymentRepository.existsByUtrIgnoreCase(utr)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "This transaction reference has already been submitted.");
+        }
+
+        payment.setUtr(utr);
+        payment.setSubmittedAt(LocalDateTime.now());
+        payment.setStatus("PENDING");
+        try {
+            return toManualPaymentResponse(manualPaymentRepository.saveAndFlush(payment));
+        } catch (DataIntegrityViolationException exception) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "This transaction reference has already been submitted.",
+                    exception
+            );
+        }
+    }
+
+    @Transactional
+    public List<InterviewAdminManualPaymentResponse> pendingManualPayments(String authorization) {
+        requireAdmin(authorization);
+        return manualPaymentRepository.findTop100ByStatusOrderByCreatedAtAsc("PENDING")
+                .stream()
+                .map(this::toAdminManualPaymentResponse)
+                .toList();
+    }
+
+    @Transactional
+    public InterviewAdminManualPaymentResponse approveManualPayment(String authorization, Long paymentId) {
+        User admin = requireAdmin(authorization);
+        InterviewManualPayment payment = manualPaymentRepository.findByIdForUpdate(paymentId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Payment request not found."));
+        if (!"PENDING".equals(payment.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Only pending payments can be approved.");
+        }
+        payment.setStatus("APPROVED");
+        payment.setReviewedAt(LocalDateTime.now());
+        payment.setReviewedBy(admin.getEmail());
+        manualPaymentRepository.save(payment);
+        grantAccess(payment.getUser(), PAID_ACCESS_DURATION_DAYS, "PAID_ACCESS",
+                payment.getUtr(), admin.getEmail());
+        return toAdminManualPaymentResponse(payment);
+    }
+
+    @Transactional
+    public InterviewAdminManualPaymentResponse rejectManualPayment(String authorization, Long paymentId) {
+        User admin = requireAdmin(authorization);
+        InterviewManualPayment payment = manualPaymentRepository.findByIdForUpdate(paymentId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Payment request not found."));
+        if (!"PENDING".equals(payment.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Only pending payments can be rejected.");
+        }
+        payment.setStatus("REJECTED");
+        payment.setReviewedAt(LocalDateTime.now());
+        payment.setReviewedBy(admin.getEmail());
+        return toAdminManualPaymentResponse(manualPaymentRepository.save(payment));
     }
 
     @Transactional
@@ -305,7 +429,7 @@ public class InterviewService {
         order.setPaymentId(request.razorpayPaymentId());
         order.setStatus("PAID");
         paymentOrderRepository.save(order);
-        grantAccess(user, 30, "RAZORPAY", request.razorpayPaymentId(), null);
+        grantAccess(user, PAID_ACCESS_DURATION_DAYS, "RAZORPAY", request.razorpayPaymentId(), null);
         return getAccessForUser(user);
     }
 
@@ -1077,6 +1201,51 @@ public class InterviewService {
         access.setReferenceId(reference);
         access.setGrantedBy(grantedBy);
         accessRepository.save(access);
+    }
+
+    private InterviewManualPaymentResponse toManualPaymentResponse(InterviewManualPayment payment) {
+        return new InterviewManualPaymentResponse(
+                payment.getId(),
+                payment.getPaymentReference(),
+                upiId,
+                upiPayeeName,
+                payment.getAmountPaise(),
+                "INR",
+                payment.getStatus(),
+                payment.getUtr(),
+                payment.getCreatedAt(),
+                payment.getSubmittedAt()
+        );
+    }
+
+    private InterviewAdminManualPaymentResponse toAdminManualPaymentResponse(InterviewManualPayment payment) {
+        return new InterviewAdminManualPaymentResponse(
+                payment.getId(),
+                payment.getUser().getId(),
+                payment.getUser().getName(),
+                payment.getUser().getEmail(),
+                payment.getPaymentReference(),
+                payment.getUtr(),
+                payment.getAmountPaise(),
+                payment.getStatus(),
+                payment.getCreatedAt(),
+                payment.getSubmittedAt()
+        );
+    }
+
+    private void requireUpiConfigured() {
+        if (upiId.isBlank()) {
+            throw new ResponseStatusException(
+                    HttpStatus.SERVICE_UNAVAILABLE,
+                    "UPI payments are not configured. Contact the administrator."
+            );
+        }
+        if (!upiId.matches("[A-Za-z0-9._-]{2,256}@[A-Za-z0-9.-]{2,64}")) {
+            throw new ResponseStatusException(
+                    HttpStatus.SERVICE_UNAVAILABLE,
+                    "The configured UPI ID is invalid. Contact the administrator."
+            );
+        }
     }
 
     private void requirePaymentConfigured() {

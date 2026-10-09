@@ -20,6 +20,7 @@ import {
     Volume2,
     X
 } from "lucide-react";
+import QRCode from "qrcode";
 import "./AiInterview.css";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
@@ -124,31 +125,16 @@ function monitoringWarning(eventType) {
     return descriptions[eventType] || "A monitoring event was recorded.";
 }
 
-function loadRazorpayScript() {
-    if (window.Razorpay) return Promise.resolve(true);
-    return new Promise((resolve) => {
-        const existingScript = document.querySelector(
-            'script[src="https://checkout.razorpay.com/v1/checkout.js"]'
-        );
-        if (existingScript) {
-            existingScript.addEventListener("load", () => resolve(Boolean(window.Razorpay)), { once: true });
-            existingScript.addEventListener("error", () => resolve(false), { once: true });
-            return;
-        }
-        const script = document.createElement("script");
-        script.src = "https://checkout.razorpay.com/v1/checkout.js";
-        script.async = true;
-        script.onload = () => resolve(Boolean(window.Razorpay));
-        script.onerror = () => resolve(false);
-        document.body.appendChild(script);
-    });
-}
-
 export default function AiInterview() {
     const [access, setAccess] = useState(null);
     const [sessions, setSessions] = useState([]);
     const [session, setSession] = useState(null);
     const [reports, setReports] = useState([]);
+    const [manualPayment, setManualPayment] = useState(null);
+    const [paymentQr, setPaymentQr] = useState("");
+    const [upiPaymentUri, setUpiPaymentUri] = useState("");
+    const [paymentUtr, setPaymentUtr] = useState("");
+    const [adminPayments, setAdminPayments] = useState([]);
     const [userResults, setUserResults] = useState([]);
     const [selectedUserId, setSelectedUserId] = useState("");
     const [searchQuery, setSearchQuery] = useState("");
@@ -337,20 +323,26 @@ export default function AiInterview() {
         setLoading(true);
         setAlert("");
         try {
-            const [accessResult, sessionResult] = await Promise.all([
+            const [accessResult, sessionResult, paymentResult] = await Promise.all([
                 interviewRequest("/api/ai-interview/access"),
-                interviewRequest("/api/ai-interview/sessions")
+                interviewRequest("/api/ai-interview/sessions"),
+                interviewRequest("/api/ai-interview/manual-payments/mine")
             ]);
             setAccess(accessResult);
             setSessions(sessionResult);
+            setManualPayment(paymentResult.find((item) => ["CREATED", "PENDING"].includes(item.status)) || null);
             const resumableSession = sessionResult.find((item) => isInterviewActive(item.status));
             if (resumableSession) {
                 setSession(resumableSession);
                 setRemainingSeconds(resumableSession.remainingSeconds);
             }
             if (accessResult.isAdmin) {
-                const reportResult = await interviewRequest("/api/ai-interview/admin/reports");
+                const [reportResult, paymentRequests] = await Promise.all([
+                    interviewRequest("/api/ai-interview/admin/reports"),
+                    interviewRequest("/api/ai-interview/admin/manual-payments")
+                ]);
                 setReports(reportResult);
+                setAdminPayments(paymentRequests);
             }
         } catch (error) {
             setAlert(error.message);
@@ -362,6 +354,64 @@ export default function AiInterview() {
     useEffect(() => {
         void loadPageData();
     }, [loadPageData]);
+
+    useEffect(() => {
+        if (!manualPayment?.paymentReference || !manualPayment.upiId
+                || !["CREATED", "PENDING"].includes(manualPayment.status)) {
+            setPaymentQr("");
+            setUpiPaymentUri("");
+            return undefined;
+        }
+
+        const params = new URLSearchParams({
+            pa: manualPayment.upiId,
+            pn: manualPayment.payeeName,
+            am: (manualPayment.amountPaise / 100).toFixed(2),
+            cu: manualPayment.currency,
+            tn: `AI Interview ${manualPayment.paymentReference}`,
+            tr: manualPayment.paymentReference
+        });
+        const uri = `upi://pay?${params.toString()}`;
+        setUpiPaymentUri(uri);
+        let cancelled = false;
+        QRCode.toDataURL(uri, { width: 240, margin: 2, errorCorrectionLevel: "M" })
+            .then((dataUrl) => {
+                if (!cancelled) setPaymentQr(dataUrl);
+            })
+            .catch((error) => {
+                if (!cancelled) setAlert(`Could not generate a payment QR code: ${error.message}`);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [manualPayment]);
+
+    useEffect(() => {
+        if (!manualPayment?.paymentReference
+                || !["CREATED", "PENDING"].includes(manualPayment.status)) return undefined;
+
+        let cancelled = false;
+        const timer = window.setInterval(async () => {
+            try {
+                const payments = await interviewRequest("/api/ai-interview/manual-payments/mine");
+                const latest = payments.find((item) => item.paymentReference === manualPayment.paymentReference);
+                if (!latest || cancelled) return;
+                setManualPayment(latest);
+                if (latest.status === "APPROVED") {
+                    setAccess(await interviewRequest("/api/ai-interview/access"));
+                    setAlert("Payment approved. Your AI Interview access is active for 1 day.");
+                } else if (latest.status === "REJECTED") {
+                    setAlert("The payment could not be verified. Check the reference and make a new payment request.");
+                }
+            } catch (error) {
+                if (!cancelled) setAlert(error.message);
+            }
+        }, 10000);
+        return () => {
+            cancelled = true;
+            window.clearInterval(timer);
+        };
+    }, [manualPayment]);
 
     useEffect(() => {
         if (!("speechSynthesis" in window)) return undefined;
@@ -858,49 +908,41 @@ export default function AiInterview() {
         setBusy(true);
         setAlert("");
         try {
-            const order = await interviewRequest("/api/ai-interview/orders", { method: "POST" });
-            const scriptReady = await loadRazorpayScript();
-            if (!scriptReady || !window.Razorpay) {
-                throw new Error("The Razorpay checkout could not be loaded. Please try again.");
-            }
-            const checkout = new window.Razorpay({
-                key: order.keyId,
-                amount: order.amountPaise,
-                currency: order.currency,
-                name: "AI Interview",
-                description: "Interview practice access",
-                order_id: order.orderId,
-                handler: async (payment) => {
-                    try {
-                        const updatedAccess = await interviewRequest("/api/ai-interview/orders/verify", {
-                            method: "POST",
-                            body: JSON.stringify({
-                                razorpayOrderId: payment.razorpay_order_id,
-                                razorpayPaymentId: payment.razorpay_payment_id,
-                                razorpaySignature: payment.razorpay_signature
-                            })
-                        });
-                        setAccess(updatedAccess);
-                        setAlert("Payment verified. Interview access is ready.");
-                    } catch (error) {
-                        setAlert(error.message);
-                    }
-                },
-                modal: {
-                    ondismiss: () => setAlert("Payment checkout was closed before verification.")
-                },
-                theme: { color: "#385fe8" }
+            const payment = await interviewRequest("/api/ai-interview/manual-payments", {
+                method: "POST"
             });
-            checkout.on("payment.failed", (event) => {
-                setAlert(event.error?.description || "Payment was not completed.");
-            });
-            checkout.open();
+            setManualPayment(payment);
+            setPaymentUtr("");
+            setAlert("Scan the QR code or open the UPI app link, pay ₹1, then submit the transaction reference.");
         } catch (error) {
             setAlert(error.message);
         } finally {
             setBusy(false);
         }
     }, []);
+
+    const submitManualPayment = useCallback(async (event) => {
+        event.preventDefault();
+        if (!manualPayment?.paymentReference) return;
+        setBusy(true);
+        setAlert("");
+        try {
+            const submitted = await interviewRequest(
+                `/api/ai-interview/manual-payments/${encodeURIComponent(manualPayment.paymentReference)}/submit`,
+                {
+                    method: "POST",
+                    body: JSON.stringify({ utr: paymentUtr })
+                }
+            );
+            setManualPayment(submitted);
+            setPaymentUtr("");
+            setAlert("Transaction reference submitted. Access will be enabled after an administrator verifies the payment in their UPI account.");
+        } catch (error) {
+            setAlert(error.message);
+        } finally {
+            setBusy(false);
+        }
+    }, [manualPayment, paymentUtr]);
 
     const selectSession = useCallback((selectedSession) => {
         stopInterviewMedia();
@@ -924,11 +966,37 @@ export default function AiInterview() {
 
     const loadAdminReports = useCallback(async () => {
         try {
-            setReports(await interviewRequest("/api/ai-interview/admin/reports"));
+            const [reportResult, paymentRequests] = await Promise.all([
+                interviewRequest("/api/ai-interview/admin/reports"),
+                interviewRequest("/api/ai-interview/admin/manual-payments")
+            ]);
+            setReports(reportResult);
+            setAdminPayments(paymentRequests);
         } catch (error) {
             setAlert(error.message);
         }
     }, []);
+
+    const reviewManualPayment = useCallback(async (paymentId, decision) => {
+        setBusy(true);
+        setAlert("");
+        try {
+            await interviewRequest(
+                `/api/ai-interview/admin/manual-payments/${paymentId}/${decision}`,
+                { method: "POST" }
+            );
+            if (decision === "approve") {
+                setAlert("Payment approved. One day of AI Interview access has been added.");
+            } else {
+                setAlert("Payment rejected. No access was granted.");
+            }
+            await loadAdminReports();
+        } catch (error) {
+            setAlert(error.message);
+        } finally {
+            setBusy(false);
+        }
+    }, [loadAdminReports]);
 
     const searchUsers = useCallback(async (event) => {
         event.preventDefault();
@@ -1275,13 +1343,79 @@ export default function AiInterview() {
                         <strong>{access.hasAccess ? "Interview access is active" : "Unlock AI Interview"}</strong>
                         <p>{access.hasAccess
                             ? access.expiresAt ? `Access through ${formatDate(access.expiresAt)}` : "Administrator access"
-                            : "Subscribe to start a personalized AI-powered mock interview."}</p>
+                            : "Pay ₹1 by Google Pay or another UPI app. Access starts only after manual payment verification."}</p>
                     </div>
-                    {!access.hasAccess && (
+                    {!access.hasAccess && !["CREATED", "PENDING"].includes(manualPayment?.status) && (
                         <button className="interview-primary-button" type="button" disabled={busy} onClick={purchaseAccess}>
                             {busy ? <LoaderCircle className="interview-spinner" size={15} /> : <LockKeyhole size={15} />}
-                            Subscribe {access.pricePaise ? `- ₹${(access.pricePaise / 100).toFixed(0)}` : ""}
+                            Pay ₹1 for 1 day
                         </button>
+                    )}
+                </section>
+            )}
+
+            {manualPayment && (
+                <section className="interview-panel interview-payment-panel" aria-live="polite">
+                    <div className="interview-panel-heading">
+                        <div>
+                            <span className="interview-eyebrow">UPI PAYMENT · ₹1</span>
+                            <h2>{manualPayment.status === "PENDING" ? "Payment awaiting verification"
+                                : manualPayment.status === "APPROVED" ? "Payment approved"
+                                    : manualPayment.status === "REJECTED" ? "Payment not verified"
+                                        : "Complete your payment"}</h2>
+                        </div>
+                        <Clock3 size={18} />
+                    </div>
+                    {manualPayment.status === "CREATED" && (
+                        <div className="interview-payment-content">
+                            <div className="interview-payment-qr">
+                                {paymentQr ? <img src={paymentQr} alt="Scan to pay one rupee by UPI" />
+                                    : <span>Preparing secure UPI QR…</span>}
+                                <small>Scan with Google Pay or another UPI app</small>
+                            </div>
+                            <div className="interview-payment-details">
+                                <p>Pay <strong>₹1.00</strong> to <strong>{manualPayment.payeeName}</strong></p>
+                                <p>UPI ID: <code>{manualPayment.upiId}</code></p>
+                                <p>Payment reference: <code>{manualPayment.paymentReference}</code></p>
+                                {upiPaymentUri && (
+                                    <a className="interview-secondary-button interview-upi-link" href={upiPaymentUri}>
+                                        Open UPI app
+                                    </a>
+                                )}
+                                <form className="interview-payment-submit" onSubmit={submitManualPayment}>
+                                    <label className="interview-field" htmlFor="interview-payment-utr">
+                                        Transaction reference / UTR from your payment app
+                                        <input
+                                            id="interview-payment-utr"
+                                            autoComplete="off"
+                                            maxLength={60}
+                                            required
+                                            value={paymentUtr}
+                                            onChange={(event) => setPaymentUtr(event.target.value)}
+                                            placeholder="Enter the UPI transaction ID"
+                                        />
+                                    </label>
+                                    <button className="interview-primary-button" type="submit" disabled={busy || !paymentUtr.trim()}>
+                                        {busy ? <LoaderCircle className="interview-spinner" size={15} /> : <Check size={15} />}
+                                        Submit for verification
+                                    </button>
+                                </form>
+                                <small className="interview-payment-disclaimer">
+                                    A UTR or screenshot is not proof of payment. An administrator checks the ₹1 credit in the UPI account before granting access.
+                                </small>
+                            </div>
+                        </div>
+                    )}
+                    {manualPayment.status === "PENDING" && (
+                        <p className="interview-payment-status">
+                            Reference <code>{manualPayment.utr}</code> was submitted. No interview access is granted while verification is pending.
+                        </p>
+                    )}
+                    {manualPayment.status === "APPROVED" && (
+                        <p className="interview-payment-status">Your payment was verified. One day of AI Interview access is active.</p>
+                    )}
+                    {manualPayment.status === "REJECTED" && (
+                        <p className="interview-payment-status">No access was granted. Please check your payment details and start a new payment request.</p>
                     )}
                 </section>
             )}
@@ -1722,6 +1856,40 @@ export default function AiInterview() {
                                     )}
                                 </>
                             )}
+                            <div className="interview-panel-heading interview-admin-payment-heading">
+                                <div><span className="interview-eyebrow">MANUAL UPI REVIEW</span><h2>Pending payments</h2></div>
+                                <button className="interview-secondary-button" type="button" onClick={loadAdminReports}>Refresh</button>
+                            </div>
+                            {adminPayments.length ? adminPayments.map((payment) => (
+                                <article className="interview-admin-payment" key={payment.id}>
+                                    <div>
+                                        <strong>{payment.userName} · {payment.userEmail}</strong>
+                                        <span>₹{(payment.amountPaise / 100).toFixed(2)} · UTR {payment.utr}</span>
+                                        <small>Submitted {formatDate(payment.submittedAt)} · Ref {payment.paymentReference}</small>
+                                    </div>
+                                    <div className="interview-admin-payment-actions">
+                                        <button
+                                            className="interview-primary-button"
+                                            type="button"
+                                            disabled={busy}
+                                            onClick={() => reviewManualPayment(payment.id, "approve")}
+                                        >
+                                            Approve
+                                        </button>
+                                        <button
+                                            className="interview-secondary-button"
+                                            type="button"
+                                            disabled={busy}
+                                            onClick={() => reviewManualPayment(payment.id, "reject")}
+                                        >
+                                            Reject
+                                        </button>
+                                    </div>
+                                    <small className="interview-payment-disclaimer">
+                                        Verify the ₹1 credit and exact UTR in your Google Pay/bank history before approving.
+                                    </small>
+                                </article>
+                            )) : <p className="interview-empty-inline">No payments are waiting for review.</p>}
                             <div className="interview-panel-heading">
                                 <h2>Monitoring events</h2>
                                 <button className="interview-secondary-button" type="button" onClick={loadAdminReports}>Refresh</button>
