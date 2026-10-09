@@ -24,6 +24,11 @@ import {
 import "./Quiz.css";
 import { getAuthToken } from "../utils/authSession";
 import { fetchWithTimeout } from "../utils/apiRequest";
+import {
+    createEmptyQuizAnswers,
+    isQuizAnswerCorrect,
+    recordQuizAnswer
+} from "../utils/quizState";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
 const TOPICS = [
@@ -114,9 +119,11 @@ function Quiz() {
             .finally(() => setLoading(false));
     }, [loadOverview]);
 
-    const beginAttempt = (quiz) => {
+    const beginAttempt = (quiz, isNewAttempt = false) => {
         setAttempt(quiz);
-        setAnswers(quiz.questions.map((question) => question.selectedOption ?? -1));
+        setAnswers(isNewAttempt
+            ? createEmptyQuizAnswers(quiz.questions.length)
+            : quiz.questions.map((question) => question.selectedOption ?? -1));
         setQuestionIndex(0);
         setSecondsLeft(Math.max(0, quiz.timeLimitMinutes * 60 -
             Math.floor((Date.now() - new Date(quiz.startedAt).getTime()) / 1000)));
@@ -138,7 +145,7 @@ function Quiz() {
                     timeLimitMinutes: timeLimit
                 })
             });
-            beginAttempt(quiz);
+            beginAttempt(quiz, true);
             await loadOverview();
         } catch (startError) {
             setError(startError.message);
@@ -197,6 +204,9 @@ function Quiz() {
         setTopic(skill);
         setView("setup");
         setAttempt(null);
+        setAnswers([]);
+        setQuestionIndex(0);
+        setSecondsLeft(0);
         window.scrollTo({ top: 0, behavior: "smooth" });
     };
 
@@ -204,6 +214,7 @@ function Quiz() {
         setAttempt(null);
         setAnswers([]);
         setQuestionIndex(0);
+        setSecondsLeft(0);
         setError("");
         setView("setup");
     };
@@ -262,9 +273,9 @@ function Quiz() {
                             <button
                                 key={`${question.number}-${optionIndex}`}
                                 className={`quiz-option ${answers[questionIndex] === optionIndex ? "is-selected" : ""}`}
-                                onClick={() => setAnswers((current) => current.map(
-                                    (answer, index) => index === questionIndex ? optionIndex : answer
-                                ))}
+                                onClick={() => setAnswers((current) =>
+                                    recordQuizAnswer(current, questionIndex, optionIndex)
+                                )}
                                 aria-pressed={answers[questionIndex] === optionIndex}
                             >
                                 <span className="quiz-option-letter">{String.fromCharCode(65 + optionIndex)}</span>
@@ -378,7 +389,10 @@ function Quiz() {
                     </div>
                     <div className="quiz-review-list">
                         {attempt.questions.map((question) => {
-                            const isCorrect = question.selectedOption === question.correctOption;
+                            const isCorrect = isQuizAnswerCorrect(
+                                question.selectedOption,
+                                question.correctOption
+                            );
                             return (
                                 <article className={`quiz-review-card ${isCorrect ? "is-correct" : "is-incorrect"}`} key={question.number}>
                                     <div className="quiz-review-question-top">

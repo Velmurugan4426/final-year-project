@@ -332,7 +332,20 @@ class QuizServiceIntegrationTests {
         assertEquals("IN_PROGRESS", started.status());
         assertEquals(5, started.questions().size());
         assertEquals("Question bank fallback", started.generationSource());
-        assertTrue(started.questions().stream().allMatch(question -> question.correctOption() == null));
+        assertNull(started.score());
+        assertNull(started.correctCount());
+        assertTrue(started.questions().stream().allMatch(question ->
+                question.selectedOption() == null
+                        && question.correctOption() == null
+                        && question.explanation().isEmpty()
+        ));
+
+        QuizAttemptResponse unsubmitted = quizService.getAttempt(token, started.id());
+        assertNull(unsubmitted.score());
+        assertNull(unsubmitted.correctCount());
+        assertTrue(unsubmitted.questions().stream().allMatch(question ->
+                question.selectedOption() == null && question.correctOption() == null
+        ));
 
         QuizAttemptResponse submitted = quizService.submit(
                 token,
@@ -348,6 +361,73 @@ class QuizServiceIntegrationTests {
         assertEquals(1, quizService.history(token).size());
         assertEquals(submitted.score(), quizService.getAttempt(token, started.id()).score());
         assertFalse(quizService.weakAreas(token).isEmpty());
+    }
+
+    @Test
+    void unansweredQuizQuestionsAreNotCountedAsCorrectAndNewAttemptsStartBlank() {
+        User user = createUser("quiz-unanswered@example.com");
+        String token = "Bearer " + jwtService.generateToken(user.getEmail());
+        QuizStartRequest request = new QuizStartRequest("Java", "Easy", 5, 10);
+
+        QuizAttemptResponse started = quizService.start(token, request);
+        assertTrue(started.questions().stream().allMatch(question ->
+                question.selectedOption() == null && question.correctOption() == null
+        ));
+
+        QuizAttemptResponse submitted = quizService.submit(
+                token,
+                started.id(),
+                new QuizSubmitRequest(java.util.Collections.nCopies(started.questions().size(), -1))
+        );
+
+        assertEquals("COMPLETED", submitted.status());
+        assertEquals(0, submitted.correctCount());
+        assertEquals(0, submitted.score());
+        assertTrue(submitted.questions().stream().allMatch(question ->
+                question.selectedOption() == null && question.correctOption() != null
+        ));
+
+        QuizAttemptResponse nextAttempt = quizService.start(token, request);
+        assertEquals("IN_PROGRESS", nextAttempt.status());
+        assertNull(nextAttempt.score());
+        assertNull(nextAttempt.correctCount());
+        assertTrue(nextAttempt.questions().stream().allMatch(question ->
+                question.selectedOption() == null && question.correctOption() == null
+        ));
+    }
+
+    @Test
+    void selectedOptionsAreGradedOnlyWhenSubmitted() {
+        User user = createUser("quiz-selected@example.com");
+        String token = "Bearer " + jwtService.generateToken(user.getEmail());
+        QuizAttemptResponse started = quizService.start(
+                token,
+                new QuizStartRequest("Java", "Easy", 5, 10)
+        );
+
+        assertNull(started.questions().getFirst().selectedOption());
+        assertNull(started.questions().getFirst().correctOption());
+        assertTrue(started.questions().getFirst().explanation().isEmpty());
+
+        QuizAttemptResponse submitted = quizService.submit(
+                token,
+                started.id(),
+                new QuizSubmitRequest(List.of(1, -1, -1, -1, -1))
+        );
+
+        assertEquals(1, submitted.questions().getFirst().selectedOption());
+        assertEquals(1, submitted.questions().getFirst().correctOption());
+        assertNotNull(submitted.questions().getFirst().explanation());
+        assertEquals(1, submitted.correctCount());
+        assertEquals(20, submitted.score());
+
+        QuizAttemptResponse nextAttempt = quizService.start(
+                token,
+                new QuizStartRequest("Java", "Easy", 5, 10)
+        );
+        assertTrue(nextAttempt.questions().stream().allMatch(question ->
+                question.selectedOption() == null && question.correctOption() == null
+        ));
     }
 
     @Test
