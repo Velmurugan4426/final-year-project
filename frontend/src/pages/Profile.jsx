@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import "./Profile.css";
 import { clearAuthSession, getAuthToken, saveAuthSession, saveSessionUser } from "../utils/authSession";
+import { fetchWithTimeout } from "../utils/apiRequest";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
 const EMPTY_FORM = {
@@ -26,7 +27,7 @@ const EMPTY_FORM = {
 async function requestProfile(url, token, options = {}) {
     let response;
     try {
-        response = await fetch(`${API_BASE}${url}`, {
+        response = await fetchWithTimeout(`${API_BASE}${url}`, {
             ...options,
             headers: {
                 Authorization: `Bearer ${token}`,
@@ -35,7 +36,7 @@ async function requestProfile(url, token, options = {}) {
             }
         });
     } catch (error) {
-        if (error.name === "AbortError") throw error;
+        if (error.name === "AbortError" || error.name === "TimeoutError") throw error;
         throw new Error("Could not connect to the account service. Please try again.");
     }
 

@@ -884,9 +884,7 @@ public class TutorModelService {
 
                     .newBuilder(uri)
 
-                    .timeout(
-                            Duration.ofSeconds(90)
-                    )
+                    .timeout(Duration.ofSeconds(45))
 
                     .header(
                             "Content-Type",
@@ -927,76 +925,78 @@ public class TutorModelService {
             String provider,
             HttpRequest request
     ) {
+        for (int attempt = 1; attempt <= 2; attempt++) {
+            try {
+                HttpResponse<String> response = httpClient.send(
+                        request,
+                        HttpResponse.BodyHandlers.ofString()
+                );
 
-        try {
-
-            HttpResponse<String> response =
-                    httpClient.send(
-
-                            request,
-
-                            HttpResponse.BodyHandlers
-                                    .ofString()
+                if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                    long retryDelayMillis = retryDelayMillis(response);
+                    if (attempt == 1 && isRetryableProviderStatus(response.statusCode())
+                            && retryDelayMillis >= 0) {
+                        pauseBeforeRetry(retryDelayMillis);
+                        continue;
+                    }
+                    String providerMessage = extractProviderError(response.body());
+                    throw new ResponseStatusException(
+                            statusForProvider(response.statusCode()),
+                            provider + " request failed (" + response.statusCode() + "): " + providerMessage
                     );
+                }
 
-            // ----------------------------------------------------
-            // Provider returned an error
-            // ----------------------------------------------------
-
-            if (response.statusCode() < 200
-                    || response.statusCode() >= 300) {
-
-                String providerMessage =
-                        extractProviderError(
-                                response.body()
-                        );
-
+                return objectMapper.readTree(response.body());
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
                 throw new ResponseStatusException(
-
-                        statusForProvider(
-                                response.statusCode()
-                        ),
-
-                        provider
-                                + " request failed ("
-                                + response.statusCode()
-                                + "): "
-                                + providerMessage
+                        HttpStatus.SERVICE_UNAVAILABLE,
+                        provider + " request was interrupted. Please try again.",
+                        exception
+                );
+            } catch (IOException exception) {
+                if (attempt == 1) {
+                    pauseBeforeRetry(250);
+                    continue;
+                }
+                throw new ResponseStatusException(
+                        HttpStatus.BAD_GATEWAY,
+                        "Could not reach " + provider + ". Please try again.",
+                        exception
                 );
             }
+        }
+        throw new ResponseStatusException(
+                HttpStatus.BAD_GATEWAY,
+                "Could not reach " + provider + ". Please try again."
+        );
+    }
 
-            // ----------------------------------------------------
-            // Parse successful JSON response
-            // ----------------------------------------------------
+    private boolean isRetryableProviderStatus(int statusCode) {
+        return statusCode == 408 || statusCode == 425 || statusCode == 429
+                || statusCode == 500 || statusCode == 502 || statusCode == 503 || statusCode == 504;
+    }
 
-            return objectMapper.readTree(
-                    response.body()
-            );
+    private long retryDelayMillis(HttpResponse<?> response) {
+        String retryAfter = response.headers().firstValue("Retry-After").orElse("");
+        if (retryAfter.isBlank()) return 500;
+        try {
+            long seconds = Long.parseLong(retryAfter);
+            return seconds < 0 || seconds > 2 ? -1 : seconds * 1_000;
+        } catch (NumberFormatException exception) {
+            return -1;
+        }
+    }
 
+    private void pauseBeforeRetry(long delayMillis) {
+        if (delayMillis == 0) return;
+        try {
+            Thread.sleep(delayMillis);
         } catch (InterruptedException exception) {
-
             Thread.currentThread().interrupt();
-
             throw new ResponseStatusException(
-
                     HttpStatus.SERVICE_UNAVAILABLE,
-
-                    provider
-                            + " request was interrupted. Please try again.",
-
-                    exception
-            );
-
-        } catch (IOException exception) {
-
-            throw new ResponseStatusException(
-
-                    HttpStatus.BAD_GATEWAY,
-
-                    "Could not reach "
-                            + provider
-                            + ". Please try again.",
-
+                    "The AI request was interrupted. Please try again.",
                     exception
             );
         }
@@ -1057,8 +1057,7 @@ public class TutorModelService {
                             .asText();
 
             if (!message.isBlank()) {
-
-                return message;
+                return redactConfiguredKeys(message);
             }
 
             // ----------------------------------------------------
@@ -1071,8 +1070,7 @@ public class TutorModelService {
                             .asText();
 
             if (!detail.isBlank()) {
-
-                return detail;
+                return redactConfiguredKeys(detail);
             }
 
         } catch (IOException exception) {
@@ -1084,6 +1082,16 @@ public class TutorModelService {
         }
 
         return "Check the API key, model name, and provider quota.";
+    }
+
+    private String redactConfiguredKeys(String message) {
+        String sanitized = message;
+        for (String secret : new String[]{geminiApiKey, groqApiKey, grokApiKey}) {
+            if (secret != null && !secret.isBlank()) {
+                sanitized = sanitized.replace(secret, "[redacted]");
+            }
+        }
+        return sanitized;
     }
 
     // ============================================================

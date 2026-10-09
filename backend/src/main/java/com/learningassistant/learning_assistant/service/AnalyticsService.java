@@ -93,13 +93,11 @@ public class AnalyticsService {
         long scoreTotal = 0;
         int scoreCount = 0;
 
-        for (QuizAttempt attempt : quizAttemptRepository.findByUserIdOrderByStartedAtDesc(user.getId())) {
-            if (!"COMPLETED".equals(attempt.getStatus())
-                    || attempt.getCompletedAt() == null
-                    || attempt.getCompletedAt().toLocalDate().isBefore(fromDate)
-                    || attempt.getCompletedAt().toLocalDate().isAfter(today)) {
-                continue;
-            }
+        for (QuizAttempt attempt : quizAttemptRepository.findCompletedBetween(
+                user.getId(),
+                fromDate.atStartOfDay(),
+                today.plusDays(1).atStartOfDay()
+        )) {
             List<QuestionResult> questions = readQuestionResults(attempt);
             if (questions.isEmpty()) {
                 continue;

@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import "./CodingAssistant.css";
 import { getAuthToken } from "../utils/authSession";
+import { fetchWithTimeout } from "../utils/apiRequest";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
 
@@ -64,15 +65,17 @@ function getToken() {
 async function askCodingAssistant(payload) {
     let response;
     try {
-        response = await fetch(`${API_BASE}/api/coding-assistant/chat`, {
+        response = await fetchWithTimeout(`${API_BASE}/api/coding-assistant/chat`, {
             method: "POST",
+            timeoutMs: 120_000,
             headers: {
                 "Content-Type": "application/json",
                 Authorization: `Bearer ${getToken()}`
             },
             body: JSON.stringify(payload)
         });
-    } catch {
+    } catch (error) {
+        if (error.name === "TimeoutError") throw error;
         throw new Error("Cannot reach the learning assistant API. Check that the backend is running and try again.");
     }
 

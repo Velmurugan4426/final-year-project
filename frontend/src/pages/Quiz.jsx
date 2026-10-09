@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import "./Quiz.css";
 import { getAuthToken } from "../utils/authSession";
+import { fetchWithTimeout } from "../utils/apiRequest";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
 const TOPICS = [
@@ -38,10 +39,12 @@ const TOPICS = [
 
 async function quizRequest(url, options = {}) {
     const token = getAuthToken();
+    const { timeoutMs = 30_000, ...fetchOptions } = options;
     if (!token) throw new Error("Please sign in to take a quiz.");
 
-    const response = await fetch(`${API_BASE}${url}`, {
-        ...options,
+    const response = await fetchWithTimeout(`${API_BASE}${url}`, {
+        ...fetchOptions,
+        timeoutMs,
         headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${token}`,
@@ -127,6 +130,7 @@ function Quiz() {
         try {
             const quiz = await quizRequest("/api/quizzes", {
                 method: "POST",
+                timeoutMs: 120_000,
                 body: JSON.stringify({
                     topic,
                     difficulty,

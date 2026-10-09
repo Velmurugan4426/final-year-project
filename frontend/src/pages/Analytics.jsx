@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import "./Analytics.css";
 import { getAuthToken } from "../utils/authSession";
+import { fetchWithTimeout } from "../utils/apiRequest";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
 const DATE_RANGES = [
@@ -37,12 +38,12 @@ async function fetchAnalytics(days, signal) {
 
     let response;
     try {
-        response = await fetch(`${API_BASE}/api/analytics?days=${days}`, {
+        response = await fetchWithTimeout(`${API_BASE}/api/analytics?days=${days}`, {
             headers: { Authorization: `Bearer ${token}` },
             signal
         });
     } catch (error) {
-        if (error.name === "AbortError") throw error;
+        if (error.name === "AbortError" || error.name === "TimeoutError") throw error;
         throw new Error("Could not connect to the learning API. Check that the backend is running.");
     }
 
@@ -182,8 +183,10 @@ function Analytics() {
         } catch (loadError) {
             if (loadError.name !== "AbortError") setError(loadError.message);
         } finally {
-            setLoading(false);
-            setRefreshing(false);
+            if (!signal?.aborted) {
+                setLoading(false);
+                setRefreshing(false);
+            }
         }
     }, []);
 

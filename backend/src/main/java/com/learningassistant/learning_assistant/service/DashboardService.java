@@ -103,20 +103,11 @@ public class DashboardService {
         upcomingTasks.sort(taskOrder);
         upcomingTasks = upcomingTasks.stream().limit(5).toList();
 
-        List<QuizAttempt> allAttempts =
-                quizAttemptRepository.findByUserIdOrderByStartedAtDesc(user.getId());
-        List<QuizAttempt> completedAttempts = allAttempts.stream()
-                .filter(attempt -> "COMPLETED".equals(attempt.getStatus()))
-                .toList();
-        long scoreTotal = completedAttempts.stream()
-                .filter(attempt -> attempt.getScore() != null)
-                .mapToLong(QuizAttempt::getScore)
-                .sum();
-        long scoredAttempts = completedAttempts.stream()
-                .filter(attempt -> attempt.getScore() != null)
-                .count();
-        List<DashboardResponse.RecentQuiz> recentQuizzes = completedAttempts.stream()
-                .limit(5)
+        QuizAttemptRepository.QuizAttemptSummary quizSummary =
+                quizAttemptRepository.getCompletedSummary(user.getId());
+        List<QuizAttempt> recentAttempts =
+                quizAttemptRepository.findTop5ByUserIdAndStatusOrderByCompletedAtDesc(user.getId(), "COMPLETED");
+        List<DashboardResponse.RecentQuiz> recentQuizzes = recentAttempts.stream()
                 .map(attempt -> new DashboardResponse.RecentQuiz(
                         attempt.getId(),
                         attempt.getTopic(),
@@ -128,11 +119,9 @@ public class DashboardService {
                 ))
                 .toList();
 
-        for (QuizAttempt attempt : completedAttempts) {
-            if (attempt.getElapsedSeconds() != null) {
-                studyMinutes += Math.max(0, (int) Math.ceil(attempt.getElapsedSeconds() / 60.0));
-            }
-        }
+        studyMinutes += quizSummary.getElapsedMinutes() == null
+                ? 0
+                : quizSummary.getElapsedMinutes().longValue();
 
         AnalyticsResponse weeklyAnalytics = analyticsService.getAnalytics(authorization, 7);
         AnalyticsResponse.Summary weekly = weeklyAnalytics.summary();
@@ -148,8 +137,10 @@ public class DashboardService {
                 completedTasks,
                 totalTasks - completedTasks,
                 completionPercentage,
-                completedAttempts.size(),
-                scoredAttempts == 0 ? 0 : Math.round(scoreTotal * 10.0 / scoredAttempts) / 10.0,
+                quizSummary.getCompletedCount(),
+                quizSummary.getAverageScore() == null
+                        ? 0
+                        : Math.round(quizSummary.getAverageScore() * 10.0) / 10.0,
                 Math.round(studyMinutes / 6.0) / 10.0,
                 weekly.currentStreak(),
                 weeklyAnalytics.activity().stream().mapToInt(AnalyticsResponse.DailyActivity::studyMinutes).sum(),

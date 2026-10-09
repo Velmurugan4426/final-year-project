@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { fetchWithTimeout } from "../utils/apiRequest";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
 
@@ -38,7 +39,7 @@ function Register() {
         setLoading(true);
 
         try {
-            const response = await fetch(
+            const response = await fetchWithTimeout(
                 `${API_BASE}/api/users`,
                 {
                     method: "POST",

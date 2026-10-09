@@ -18,6 +18,7 @@ import {
 
 import "../App.css";
 import { getAuthToken } from "../utils/authSession";
+import { fetchWithTimeout } from "../utils/apiRequest";
 
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
@@ -47,11 +48,13 @@ function Tutor() {
     const tutorRequest = async (url, options = {}) => {
 
         const token = getAuthToken();
+        const { timeoutMs = 30_000, ...fetchOptions } = options;
 
-        const response = await fetch(
+        const response = await fetchWithTimeout(
             `${API_BASE}${url}`,
             {
-                ...options,
+                ...fetchOptions,
+                timeoutMs,
 
                 headers: {
                     "Content-Type": "application/json",
@@ -385,6 +388,7 @@ function Tutor() {
                     `/api/tutor/conversations/${conversation.id}/messages`,
                     {
                         method: "POST",
+                        timeoutMs: 120_000,
 
                         body: JSON.stringify({
                             message:

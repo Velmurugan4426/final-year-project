@@ -24,28 +24,31 @@ import {
 import QRCode from "qrcode";
 import "./AiInterview.css";
 import { getAuthToken } from "../utils/authSession";
+import { fetchWithTimeout } from "../utils/apiRequest";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
 async function interviewRequest(path, options = {}) {
     const token = getAuthToken();
+    const { timeoutMs = 30_000, ...fetchOptions } = options;
     if (!token) {
         throw new Error("Please sign in to use AI Interview.");
     }
 
     let response;
     try {
-        response = await fetch(`${API_BASE}${path}`, {
-            ...options,
+        response = await fetchWithTimeout(`${API_BASE}${path}`, {
+            ...fetchOptions,
+            timeoutMs,
             headers: {
                 Authorization: `Bearer ${token}`,
-                ...(options.body && !(options.body instanceof FormData)
+                ...(fetchOptions.body && !(fetchOptions.body instanceof FormData)
                     ? { "Content-Type": "application/json" }
                     : {}),
-                ...options.headers
+                ...fetchOptions.headers
             }
         });
     } catch (error) {
-        if (error.name === "AbortError") throw error;
+        if (error.name === "AbortError" || error.name === "TimeoutError") throw error;
         throw new Error("Could not connect to the interview service. Please check your connection.");
     }
 
@@ -70,10 +73,12 @@ async function interviewResumeBlob(path) {
 
     let response;
     try {
-        response = await fetch(`${API_BASE}${path}`, {
+        response = await fetchWithTimeout(`${API_BASE}${path}`, {
+            timeoutMs: 30_000,
             headers: { Authorization: `Bearer ${token}` }
         });
-    } catch {
+    } catch (error) {
+        if (error.name === "TimeoutError") throw error;
         throw new Error("Could not connect to the interview service. Please check your connection.");
     }
     if (!response.ok) {
@@ -421,25 +426,30 @@ export default function AiInterview() {
                 || !["CREATED", "PENDING"].includes(manualPayment.status)) return undefined;
 
         let cancelled = false;
-        const timer = window.setInterval(async () => {
+        let timer;
+        const pollPayment = async () => {
             try {
                 const payments = await interviewRequest("/api/ai-interview/manual-payments/mine");
                 const latest = payments.find((item) => item.paymentReference === manualPayment.paymentReference);
-                if (!latest || cancelled) return;
-                setManualPayment(latest);
-                if (latest.status === "APPROVED") {
-                    setAccess(await interviewRequest("/api/ai-interview/access"));
-                    setAlert("Payment approved. Your AI Interview access is active for 1 day.");
-                } else if (latest.status === "REJECTED") {
-                    setAlert("The payment could not be verified. Check the reference and make a new payment request.");
+                if (latest && !cancelled) {
+                    if (latest.status !== manualPayment.status) setManualPayment(latest);
+                    if (latest.status === "APPROVED") {
+                        setAccess(await interviewRequest("/api/ai-interview/access"));
+                        setAlert("Payment approved. Your AI Interview access is active for 1 day.");
+                    } else if (latest.status === "REJECTED") {
+                        setAlert("The payment could not be verified. Check the reference and make a new payment request.");
+                    }
                 }
             } catch (error) {
                 if (!cancelled) setAlert(error.message);
+            } finally {
+                if (!cancelled) timer = window.setTimeout(pollPayment, 10_000);
             }
-        }, 10000);
+        };
+        timer = window.setTimeout(pollPayment, 10_000);
         return () => {
             cancelled = true;
-            window.clearInterval(timer);
+            window.clearTimeout(timer);
         };
     }, [manualPayment]);
 
@@ -799,16 +809,16 @@ export default function AiInterview() {
 
         setBusy(true);
         setAlert("");
-        const media = streamRef.current || await enableDevices();
-        if (!media || !media.getVideoTracks().some((track) => track.readyState === "live")
-                || !media.getAudioTracks().some((track) => track.readyState === "live")) {
-            setBusy(false);
-            setAlert("A working camera and microphone are required to start the interview.");
-            return;
-        }
         try {
+            const media = streamRef.current || await enableDevices();
+            if (!media || !media.getVideoTracks().some((track) => track.readyState === "live")
+                    || !media.getAudioTracks().some((track) => track.readyState === "live")) {
+                setAlert("A working camera and microphone are required to start the interview.");
+                return;
+            }
             const result = await interviewRequest("/api/ai-interview/sessions", {
                 method: "POST",
+                timeoutMs: 120_000,
                 body: JSON.stringify({
                     jobRole: jobRole.trim(),
                     interviewMode,
@@ -831,17 +841,23 @@ export default function AiInterview() {
     const continueInterview = useCallback(async () => {
         if (!session || !isInterviewActive(session.status)) return;
         setBusy(true);
-        stopDevices();
-        const media = await enableDevices();
-        if (media?.getVideoTracks().some((track) => track.readyState === "live")
-                && media?.getAudioTracks().some((track) => track.readyState === "live")) {
-            activeMonitoringRef.current = true;
-            terminationHandledRef.current = false;
-            await requestFullscreen();
-        } else {
-            setAlert("A working camera and microphone are required to continue the interview.");
+        setAlert("");
+        try {
+            stopDevices();
+            const media = await enableDevices();
+            if (media?.getVideoTracks().some((track) => track.readyState === "live")
+                    && media?.getAudioTracks().some((track) => track.readyState === "live")) {
+                activeMonitoringRef.current = true;
+                terminationHandledRef.current = false;
+                await requestFullscreen();
+            } else {
+                setAlert("A working camera and microphone are required to continue the interview.");
+            }
+        } catch (error) {
+            setAlert(error.message || "The camera and microphone could not be enabled.");
+        } finally {
+            setBusy(false);
         }
-        setBusy(false);
     }, [enableDevices, requestFullscreen, session, stopDevices]);
 
     const submitAnswer = useCallback(async (event) => {
@@ -883,6 +899,7 @@ export default function AiInterview() {
         try {
             const result = await interviewRequest(`/api/ai-interview/sessions/${session.id}/answers`, {
                 method: "POST",
+                timeoutMs: 120_000,
                 body: JSON.stringify({ answer: spokenAnswer })
             });
             applySessionResponse(result);
@@ -1232,7 +1249,7 @@ export default function AiInterview() {
                 formData.append("audio", blob, filename);
                 const result = await interviewRequest(
                     `/api/ai-interview/sessions/${sessionId}/transcription?language=${encodeURIComponent(transcriptionLanguage)}`,
-                    { method: "POST", body: formData }
+                    { method: "POST", body: formData, timeoutMs: 120_000 }
                 );
                 answerRef.current = result.transcript;
                 setAnswer(result.transcript);

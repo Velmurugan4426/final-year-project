@@ -45,8 +45,10 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 import org.slf4j.Logger;
@@ -117,6 +119,7 @@ public class InterviewService {
     private final String upiPayeeName;
     private final int interviewDurationMinutes;
     private final int heartbeatTimeoutMinutes;
+    private final TransactionTemplate transactionTemplate;
 
     public InterviewService(
             InterviewSessionRepository sessionRepository,
@@ -135,7 +138,8 @@ public class InterviewService {
             @Value("${ai-interview.upi-id:}") String upiId,
             @Value("${ai-interview.upi-payee-name:AI Interview}") String upiPayeeName,
             @Value("${ai-interview.duration-minutes:5}") int interviewDurationMinutes,
-            @Value("${ai-interview.heartbeat-timeout-minutes:5}") int heartbeatTimeoutMinutes
+            @Value("${ai-interview.heartbeat-timeout-minutes:5}") int heartbeatTimeoutMinutes,
+            PlatformTransactionManager transactionManager
     ) {
         this.sessionRepository = sessionRepository;
         this.accessRepository = accessRepository;
@@ -156,6 +160,7 @@ public class InterviewService {
                 : upiPayeeName.trim();
         this.interviewDurationMinutes = Math.max(5, interviewDurationMinutes);
         this.heartbeatTimeoutMinutes = Math.max(1, heartbeatTimeoutMinutes);
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
 
     @Transactional
@@ -662,18 +667,43 @@ public class InterviewService {
         return toResponse(sessionRepository.save(session));
     }
 
-    @Transactional
     public InterviewSessionResponse answer(
+            String authorization,
+            Long sessionId,
+            InterviewAnswerRequest request
+    ) {
+        AnswerPreparation preparation = transactionTemplate.execute(transaction ->
+                prepareAnswer(authorization, sessionId, request)
+        );
+        if (preparation.immediateResponse() != null) {
+            return preparation.immediateResponse();
+        }
+
+        PreparedAnswer prepared = preparation.preparedAnswer();
+        Turn answeredTurn = prepared.session().getTranscript().getLast();
+        answeredTurn.setAnswer(prepared.answer());
+        InterviewerDecision nextTurn = generateNextTurn(prepared.session(), prepared.resume());
+        String feedback = nextTurn.complete() ? generateFeedback(prepared.session()) : null;
+
+        return transactionTemplate.execute(transaction ->
+                finalizeAnswer(prepared, nextTurn, feedback)
+        );
+    }
+
+    private AnswerPreparation prepareAnswer(
             String authorization,
             Long sessionId,
             InterviewAnswerRequest request
     ) {
         User user = authenticatedUser(authorization);
         InterviewSession session = ownedSessionForUpdate(user, sessionId);
-            if (expireIfDue(session, LocalDateTime.now())) {
-                return toResponse(sessionRepository.save(session));
-            }
-            requireActive(session);
+        if (expireIfDue(session, LocalDateTime.now())) {
+            return new AnswerPreparation(
+                    toResponse(sessionRepository.save(session)),
+                    null
+            );
+        }
+        requireActive(session);
 
         String answer = request == null || request.answer() == null ? "" : request.answer().trim();
         if (answer.isEmpty()) {
@@ -690,20 +720,43 @@ public class InterviewService {
                     "This interview has no answer waiting to be submitted."
             );
         }
-        Turn currentTurn = transcript.getLast();
-        if (!blank(currentTurn.getAnswer())) {
+        if (!blank(transcript.getLast().getAnswer())) {
             throw new ResponseStatusException(
                     HttpStatus.CONFLICT,
                     "This answer has already been submitted."
             );
         }
-        currentTurn.setAnswer(answer);
-        session.setLastHeartbeatAt(LocalDateTime.now());
+
         InterviewResume resume = resumeRepository.findByUserId(user.getId())
                 .orElseThrow(() -> badRequest("The resume for this interview is no longer available."));
-        InterviewerDecision nextTurn = generateNextTurn(session, resume);
+        user.getName();
+        return new AnswerPreparation(null, new PreparedAnswer(session, resume, answer));
+    }
+
+    private InterviewSessionResponse finalizeAnswer(
+            PreparedAnswer prepared,
+            InterviewerDecision nextTurn,
+            String feedback
+    ) {
+        Long sessionId = prepared.session().getId();
+        Long userId = prepared.session().getUser().getId();
+        InterviewSession session = sessionRepository.findForUpdateByIdAndUserId(sessionId, userId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Interview session not found."));
+        requireActive(session);
+
+        List<Turn> transcript = session.getTranscript();
+        if (transcript.isEmpty() || !blank(transcript.getLast().getAnswer())
+                || !transcript.getLast().getQuestion().equals(prepared.session().getCurrentQuestion())) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "This interview changed while the next question was being prepared. Refresh and continue."
+            );
+        }
+
+        transcript.getLast().setAnswer(prepared.answer());
+        session.setLastHeartbeatAt(LocalDateTime.now());
         if (nextTurn.complete()) {
-            session.setFeedback(generateFeedback(session));
+            session.setFeedback(feedback);
             session.setStatus("COMPLETED");
             session.setCurrentQuestion(null);
             session.setCompletedAt(LocalDateTime.now());
@@ -982,13 +1035,27 @@ public class InterviewService {
                 history.add(answer);
             }
         }
-        String result = tutorModelService.generateInterviewReply(history, prompt);
-        if (blank(result)) {
-            throw new ResponseStatusException(
-                    HttpStatus.SERVICE_UNAVAILABLE,
-                    "The AI interviewer could not prepare the next turn. Please try again."
-            );
+        for (int attempt = 0; attempt < 2; attempt++) {
+            String retryInstruction = attempt == 0
+                    ? ""
+                    : "\nYour previous response was empty, invalid, or repeated an earlier question. "
+                            + "Return a valid JSON decision and, when continuing, ask a new concise question.";
+            String result = tutorModelService.generateInterviewReply(history, prompt + retryInstruction);
+            InterviewerDecision decision = parseNextTurn(result, session);
+            if (decision != null) {
+                return decision;
+            }
         }
+
+        throw new ResponseStatusException(
+                HttpStatus.BAD_GATEWAY,
+                "The AI interviewer could not prepare a valid new question after retrying. "
+                        + "Your answer was not submitted; please try again."
+        );
+    }
+
+    private InterviewerDecision parseNextTurn(String result, InterviewSession session) {
+        if (blank(result)) return null;
 
         String responseText = stripJsonFences(result);
         if (!responseText.startsWith("{")) {
@@ -997,12 +1064,17 @@ public class InterviewService {
                     || plainQuestion.equalsIgnoreCase("[INTERVIEW_COMPLETE]")) {
                 return new InterviewerDecision(true, "", session.getCurrentDifficulty());
             }
-            return new InterviewerDecision(
-                    false,
-                    requireNewQuestion(plainQuestion, session),
-                    session.getCurrentDifficulty()
-            );
+            try {
+                return new InterviewerDecision(
+                        false,
+                        requireNewQuestion(plainQuestion, session),
+                        session.getCurrentDifficulty()
+                );
+            } catch (ResponseStatusException exception) {
+                return null;
+            }
         }
+
         try {
             JsonNode decision = objectMapper.readTree(responseText);
             String action = decision.path("decision").asText("CONTINUE").trim().toUpperCase(Locale.ROOT);
@@ -1021,18 +1093,10 @@ public class InterviewService {
                     return new InterviewerDecision(false, requireNewQuestion(question, session), difficulty);
                 }
             }
-        } catch (JsonProcessingException exception) {
-            throw new ResponseStatusException(
-                    HttpStatus.BAD_GATEWAY,
-                    "The AI interviewer returned an invalid decision. Please retry your answer.",
-                    exception
-            );
+        } catch (JsonProcessingException | ResponseStatusException exception) {
+            return null;
         }
-
-        throw new ResponseStatusException(
-                HttpStatus.BAD_GATEWAY,
-                "The AI interviewer returned an invalid next question. Please retry your answer."
-        );
+        return null;
     }
 
     private String requireNewQuestion(String question, InterviewSession session) {
@@ -1485,6 +1549,19 @@ public class InterviewService {
             case "FACE_NOT_VISIBLE" -> "FACE_NOT_VISIBLE: The candidate was out of camera view.";
             default -> throw badRequest("This is not a supported interview monitoring event.");
         };
+    }
+
+    private record AnswerPreparation(
+            InterviewSessionResponse immediateResponse,
+            PreparedAnswer preparedAnswer
+    ) {
+    }
+
+    private record PreparedAnswer(
+            InterviewSession session,
+            InterviewResume resume,
+            String answer
+    ) {
     }
 
     private record InterviewerDecision(boolean complete, String question, String difficulty) {

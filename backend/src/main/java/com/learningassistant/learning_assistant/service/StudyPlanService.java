@@ -86,7 +86,6 @@ public class StudyPlanService {
         );
     }
 
-    @Transactional
     public StudyPlanResponse generateAiPlan(
             String authorization,
             AiStudyPlanRequest request

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { saveAuthSession } from "../utils/authSession";
+import { fetchWithTimeout } from "../utils/apiRequest";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
 
@@ -30,7 +31,7 @@ function Login() {
 
         try {
 
-            const response = await fetch(
+            const response = await fetchWithTimeout(
                 `${API_BASE}/api/auth/login`,
                 {
                     method: "POST",

@@ -21,13 +21,14 @@ import {
 } from "lucide-react";
 import "./Dashboard.css";
 import { clearAuthSession, getAuthToken, getStoredUser, saveSessionUser } from "../utils/authSession";
+import { fetchWithTimeout } from "../utils/apiRequest";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
 
 async function dashboardRequest(url, token, options = {}) {
     let response;
     try {
-        response = await fetch(`${API_BASE}${url}`, {
+        response = await fetchWithTimeout(`${API_BASE}${url}`, {
             ...options,
             headers: {
                 Authorization: `Bearer ${token}`,
@@ -36,7 +37,7 @@ async function dashboardRequest(url, token, options = {}) {
             }
         });
     } catch (error) {
-        if (error.name === "AbortError") throw error;
+        if (error.name === "AbortError" || error.name === "TimeoutError") throw error;
         throw new Error("Could not connect to the learning service. Check that the backend is running.");
     }
 
@@ -121,8 +122,10 @@ function Dashboard() {
                 }
             }
         } finally {
-            setLoading(false);
-            setRefreshing(false);
+            if (!signal?.aborted) {
+                setLoading(false);
+                setRefreshing(false);
+            }
         }
     }, [navigate]);
 

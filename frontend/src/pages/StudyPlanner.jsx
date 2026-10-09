@@ -13,6 +13,7 @@ import {
     X
 } from "lucide-react";
 import { getAuthToken } from "../utils/authSession";
+import { fetchWithTimeout } from "../utils/apiRequest";
 
 const MAX_PLAN_DAYS = 180;
 const API_BASE = import.meta.env.VITE_API_URL || "";
@@ -189,6 +190,7 @@ const getSessionType = (title = "") => {
 
 async function request(path, options = {}) {
     const token = getAuthToken();
+    const { timeoutMs = 30_000, ...fetchOptions } = options;
 
     if (!token) {
         throw new Error(
@@ -196,10 +198,11 @@ async function request(path, options = {}) {
         );
     }
 
-    const response = await fetch(
+    const response = await fetchWithTimeout(
         `${API_BASE}${path}`,
         {
-            ...options,
+            ...fetchOptions,
+            timeoutMs,
             headers: {
                 "Content-Type": "application/json",
                 Authorization: `Bearer ${token}`,
@@ -502,6 +505,7 @@ function StudyPlanner() {
                     "/api/study-plans/ai-generate",
                     {
                         method: "POST",
+                        timeoutMs: 120_000,
                         body: JSON.stringify({
                             goal:
                                 form.goal.trim(),
