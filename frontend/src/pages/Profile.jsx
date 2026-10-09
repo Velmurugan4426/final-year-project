@@ -12,6 +12,7 @@ import {
     UserRound
 } from "lucide-react";
 import "./Profile.css";
+import { clearAuthSession, getAuthToken, saveAuthSession, saveSessionUser } from "../utils/authSession";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
 const EMPTY_FORM = {
@@ -72,7 +73,7 @@ function Profile() {
 
     useEffect(() => {
         const controller = new AbortController();
-        const token = localStorage.getItem("token");
+        const token = getAuthToken();
         if (!token) {
             navigate("/login", { replace: true });
             return () => controller.abort();
@@ -95,8 +96,7 @@ function Profile() {
                 if (loadError.name !== "AbortError") {
                     setError(loadError.message);
                     if (loadError.message.includes("session") || loadError.message.includes("sign in")) {
-                        localStorage.removeItem("token");
-                        localStorage.removeItem("user");
+                        clearAuthSession();
                         navigate("/login", { replace: true });
                     }
                 }
@@ -121,7 +121,7 @@ function Profile() {
         setNotice("");
         setSaving(true);
         try {
-            const result = await requestProfile("/api/users/me", localStorage.getItem("token"), {
+            const result = await requestProfile("/api/users/me", getAuthToken(), {
                 method: "PUT",
                 body: JSON.stringify(form)
             });
@@ -135,13 +135,13 @@ function Profile() {
             setProfile(result.profile);
             setForm(normalizedForm);
             setOriginalForm(normalizedForm);
-            if (result.token) localStorage.setItem("token", result.token);
-            localStorage.setItem("user", JSON.stringify({
+            const updatedUser = {
                 userId: result.profile.userId,
                 name: result.profile.name,
                 email: result.profile.email
-            }));
-            window.dispatchEvent(new Event("user-profile-updated"));
+            };
+            if (result.token) saveAuthSession(result.token, updatedUser);
+            else saveSessionUser(updatedUser);
             setNotice("Your profile has been saved.");
         } catch (saveError) {
             setError(saveError.message);
@@ -164,7 +164,7 @@ function Profile() {
         }
         setPasswordSaving(true);
         try {
-            await requestProfile("/api/users/me/password", localStorage.getItem("token"), {
+            await requestProfile("/api/users/me/password", getAuthToken(), {
                 method: "PUT",
                 body: JSON.stringify({
                     currentPassword: passwordForm.currentPassword,

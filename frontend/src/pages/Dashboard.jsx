@@ -20,6 +20,7 @@ import {
     TrendingUp
 } from "lucide-react";
 import "./Dashboard.css";
+import { clearAuthSession, getAuthToken, getStoredUser, saveSessionUser } from "../utils/authSession";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
 
@@ -92,7 +93,7 @@ function Dashboard() {
     const [updatingTask, setUpdatingTask] = useState(null);
 
     const loadDashboard = useCallback(async (signal, background = false) => {
-        const token = localStorage.getItem("token");
+        const token = getAuthToken();
         if (!token) {
             navigate("/login", { replace: true });
             return;
@@ -104,24 +105,18 @@ function Dashboard() {
         try {
             const result = await dashboardRequest("/api/dashboard", token, { signal });
             setDashboard(result);
-            let storedUser = {};
-            try {
-                storedUser = JSON.parse(localStorage.getItem("user") || "{}");
-            } catch {
-                storedUser = {};
-            }
-            localStorage.setItem("user", JSON.stringify({
+            const storedUser = getStoredUser() || {};
+            saveSessionUser({
                 ...storedUser,
                 userId: result.userId,
                 name: result.name,
                 email: result.email
-            }));
+            });
         } catch (loadError) {
             if (loadError.name !== "AbortError") {
                 setError(loadError.message);
                 if (loadError.status === 401) {
-                    localStorage.removeItem("token");
-                    localStorage.removeItem("user");
+                    clearAuthSession();
                     navigate("/login", { replace: true });
                 }
             }
@@ -143,7 +138,7 @@ function Dashboard() {
         try {
             await dashboardRequest(
                 `/api/study-plans/${task.planId}/tasks/${task.taskId}`,
-                localStorage.getItem("token"),
+                getAuthToken(),
                 { method: "PATCH", body: JSON.stringify({ completed: !task.completed }) }
             );
             await loadDashboard(undefined, true);

@@ -1,10 +1,11 @@
 import { Navigate, Outlet, useLocation } from "react-router-dom";
+import { getAuthToken } from "../utils/authSession";
 
 function ProtectedRoute() {
 
     const location = useLocation();
 
-    const token = localStorage.getItem("token");
+    const token = getAuthToken();
 
     // User is not logged in
     if (!token) {

@@ -22,6 +22,7 @@ import {
     X
 } from "lucide-react";
 import "./Quiz.css";
+import { getAuthToken } from "../utils/authSession";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
 const TOPICS = [
@@ -36,7 +37,7 @@ const TOPICS = [
 ];
 
 async function quizRequest(url, options = {}) {
-    const token = localStorage.getItem("token");
+    const token = getAuthToken();
     if (!token) throw new Error("Please sign in to take a quiz.");
 
     const response = await fetch(`${API_BASE}${url}`, {

@@ -21,6 +21,7 @@ import {
     Trash2
 } from "lucide-react";
 import "./CodingAssistant.css";
+import { getAuthToken } from "../utils/authSession";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
 
@@ -55,7 +56,7 @@ const QUICK_PROMPTS = [
 ];
 
 function getToken() {
-    const token = localStorage.getItem("token");
+    const token = getAuthToken();
     if (!token) throw new Error("Please sign in to use Coding Assistant.");
     return token;
 }

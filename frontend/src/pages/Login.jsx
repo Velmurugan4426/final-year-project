@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
+import { saveAuthSession } from "../utils/authSession";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
 
@@ -61,24 +62,11 @@ function Login() {
             // SAVE JWT
             // =================================================
 
-            localStorage.setItem(
-                "token",
-                data.token
-            );
-
-
-            // =================================================
-            // SAVE USER INFORMATION
-            // =================================================
-
-            localStorage.setItem(
-                "user",
-                JSON.stringify({
-                    userId: data.userId,
-                    name: data.name,
-                    email: data.email
-                })
-            );
+            saveAuthSession(data.token, {
+                userId: data.userId,
+                name: data.name,
+                email: data.email
+            });
 
 
             // =================================================

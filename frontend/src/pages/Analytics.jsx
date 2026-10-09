@@ -22,6 +22,7 @@ import {
     Trophy
 } from "lucide-react";
 import "./Analytics.css";
+import { getAuthToken } from "../utils/authSession";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
 const DATE_RANGES = [
@@ -31,7 +32,7 @@ const DATE_RANGES = [
 ];
 
 async function fetchAnalytics(days, signal) {
-    const token = localStorage.getItem("token");
+    const token = getAuthToken();
     if (!token) throw new Error("Please sign in to view your learning analytics.");
 
     let response;

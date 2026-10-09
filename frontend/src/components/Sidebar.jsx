@@ -10,6 +10,7 @@ import {
     Video,
     UserRound
 } from "lucide-react";
+import { getStoredUser } from "../utils/authSession";
 
 const navigationItems = [
     {
@@ -54,27 +55,16 @@ const navigationItems = [
     }
 ];
 
-function readStoredUser() {
-    try {
-        const storedUser = localStorage.getItem("user");
-        return storedUser ? JSON.parse(storedUser) : null;
-    } catch {
-        return null;
-    }
-}
-
 function Sidebar() {
-    const [user, setUser] = useState(readStoredUser);
+    const [user, setUser] = useState(getStoredUser);
     const userName = user?.name || "Learner";
     const userInitial = userName.trim().charAt(0).toUpperCase() || "L";
 
     useEffect(() => {
-        const updateUser = () => setUser(readStoredUser());
+        const updateUser = () => setUser(getStoredUser());
         window.addEventListener("user-profile-updated", updateUser);
-        window.addEventListener("storage", updateUser);
         return () => {
             window.removeEventListener("user-profile-updated", updateUser);
-            window.removeEventListener("storage", updateUser);
         };
     }, []);
 

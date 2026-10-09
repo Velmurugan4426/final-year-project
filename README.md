@@ -16,6 +16,9 @@ npm run dev
 Other frontend commands are `npm run build`, `npm run lint`, and `npm run preview`.
 In development, Vite proxies `/api` requests to `http://localhost:8080`.
 For a separately hosted frontend, set `VITE_API_URL` to the backend URL.
+Login credentials are kept in tab-scoped browser storage so separate tabs can
+use separate accounts without overwriting each other's profile. Sign in again
+after closing a tab or when opening the app in a new tab.
 
 ## Run the backend
 

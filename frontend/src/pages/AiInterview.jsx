@@ -23,10 +23,11 @@ import {
 } from "lucide-react";
 import QRCode from "qrcode";
 import "./AiInterview.css";
+import { getAuthToken } from "../utils/authSession";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
 async function interviewRequest(path, options = {}) {
-    const token = localStorage.getItem("token");
+    const token = getAuthToken();
     if (!token) {
         throw new Error("Please sign in to use AI Interview.");
     }
@@ -64,7 +65,7 @@ async function interviewRequest(path, options = {}) {
 }
 
 async function interviewResumeBlob(path) {
-    const token = localStorage.getItem("token");
+    const token = getAuthToken();
     if (!token) throw new Error("Please sign in to access this resume.");
 
     let response;

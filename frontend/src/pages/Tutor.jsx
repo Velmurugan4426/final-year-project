@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 
 import "../App.css";
+import { getAuthToken } from "../utils/authSession";
 
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
@@ -45,7 +46,7 @@ function Tutor() {
 
     const tutorRequest = async (url, options = {}) => {
 
-        const token = localStorage.getItem("token");
+        const token = getAuthToken();
 
         const response = await fetch(
             `${API_BASE}${url}`,

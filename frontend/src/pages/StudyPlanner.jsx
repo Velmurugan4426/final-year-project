@@ -12,6 +12,7 @@ import {
     Trash2,
     X
 } from "lucide-react";
+import { getAuthToken } from "../utils/authSession";
 
 const MAX_PLAN_DAYS = 180;
 const API_BASE = import.meta.env.VITE_API_URL || "";
@@ -187,7 +188,7 @@ const getSessionType = (title = "") => {
 };
 
 async function request(path, options = {}) {
-    const token = localStorage.getItem("token");
+    const token = getAuthToken();
 
     if (!token) {
         throw new Error(
