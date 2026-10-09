@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.learningassistant.learning_assistant.dto.InterviewAccessResponse;
 import com.learningassistant.learning_assistant.dto.InterviewAdminReportResponse;
 import com.learningassistant.learning_assistant.dto.InterviewAdminManualPaymentResponse;
+import com.learningassistant.learning_assistant.dto.InterviewAdminResumeResponse;
 import com.learningassistant.learning_assistant.dto.InterviewAdminUserResponse;
 import com.learningassistant.learning_assistant.dto.InterviewAnswerRequest;
 import com.learningassistant.learning_assistant.dto.InterviewFlagRequest;
@@ -17,6 +18,7 @@ import com.learningassistant.learning_assistant.dto.InterviewOrderVerifyRequest;
 import com.learningassistant.learning_assistant.dto.InterviewSessionResponse;
 import com.learningassistant.learning_assistant.dto.InterviewStartRequest;
 import com.learningassistant.learning_assistant.dto.InterviewTranscriptionResponse;
+import com.learningassistant.learning_assistant.dto.ResumeFileContent;
 import com.learningassistant.learning_assistant.entity.InterviewAccess;
 import com.learningassistant.learning_assistant.entity.InterviewPaymentOrder;
 import com.learningassistant.learning_assistant.entity.InterviewManualPayment;
@@ -43,8 +45,12 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
@@ -65,10 +71,12 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.nio.file.NoSuchFileException;
 
 @Service
 public class InterviewService {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(InterviewService.class);
     private static final int MAX_RESUME_BYTES = 5 * 1024 * 1024;
     private static final int MAX_TRANSCRIPTION_BYTES = 5 * 1024 * 1024;
     private static final int MAX_ANSWER_LENGTH = 12_000;
@@ -94,6 +102,7 @@ public class InterviewService {
     private final InterviewSessionRepository sessionRepository;
     private final InterviewAccessRepository accessRepository;
     private final InterviewResumeRepository resumeRepository;
+    private final ResumeFileStorage resumeFileStorage;
     private final InterviewPaymentOrderRepository paymentOrderRepository;
     private final InterviewManualPaymentRepository manualPaymentRepository;
     private final UserRepository userRepository;
@@ -113,6 +122,7 @@ public class InterviewService {
             InterviewSessionRepository sessionRepository,
             InterviewAccessRepository accessRepository,
             InterviewResumeRepository resumeRepository,
+            ResumeFileStorage resumeFileStorage,
             InterviewPaymentOrderRepository paymentOrderRepository,
             InterviewManualPaymentRepository manualPaymentRepository,
             UserRepository userRepository,
@@ -130,6 +140,7 @@ public class InterviewService {
         this.sessionRepository = sessionRepository;
         this.accessRepository = accessRepository;
         this.resumeRepository = resumeRepository;
+        this.resumeFileStorage = resumeFileStorage;
         this.paymentOrderRepository = paymentOrderRepository;
         this.manualPaymentRepository = manualPaymentRepository;
         this.userRepository = userRepository;
@@ -163,12 +174,26 @@ public class InterviewService {
         }
 
         String fileName = file.getOriginalFilename();
+        if (fileName != null) {
+            fileName = fileName.replace('\\', '/');
+            fileName = fileName.substring(fileName.lastIndexOf('/') + 1)
+                    .replaceAll("[\\p{Cntrl}]", "")
+                    .trim();
+        }
         if (fileName == null || !fileName.toLowerCase(Locale.ROOT).endsWith(".pdf")) {
             throw badRequest("Upload a PDF resume.");
         }
+        if (fileName.isBlank()) {
+            throw badRequest("Choose a PDF resume with a valid file name.");
+        }
+        if (fileName.length() > 255) {
+            fileName = fileName.substring(fileName.length() - 255);
+        }
 
+        byte[] fileData;
+        String resumeText;
         try {
-            byte[] fileData = file.getBytes();
+            fileData = file.getBytes();
             if (fileData.length < 5
                     || fileData[0] != '%'
                     || fileData[1] != 'P'
@@ -178,7 +203,6 @@ public class InterviewService {
                 throw badRequest("The selected file is not a valid PDF.");
             }
 
-            String resumeText;
             try (PDDocument document = Loader.loadPDF(fileData)) {
                 resumeText = new PDFTextStripper().getText(document).trim();
             }
@@ -186,26 +210,153 @@ public class InterviewService {
                 throw badRequest("The PDF does not contain readable resume text.");
             }
 
-            InterviewResume resume = resumeRepository.findByUserId(user.getId())
-                    .orElseGet(InterviewResume::new);
-            resume.setUser(user);
-            resume.setFileName(fileName);
-            resume.setResumeText(resumeText);
-            resume.setFileData(fileData);
-            resumeRepository.save(resume);
-            return getAccessForUser(user);
         } catch (IOException exception) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
                     "The selected file could not be read as a PDF."
             );
         }
+
+        InterviewResume resume = resumeRepository.findByUserId(user.getId())
+                .orElseGet(InterviewResume::new);
+        String previousStorageKey = resume.getStorageKey();
+        String storageKey;
+        try {
+            storageKey = resumeFileStorage.store(fileData);
+        } catch (IOException exception) {
+            throw new ResponseStatusException(
+                    HttpStatus.INTERNAL_SERVER_ERROR,
+                    "The resume could not be saved to persistent storage."
+            );
+        }
+        removeFileIfTransactionRollsBack(storageKey);
+        resume.setUser(user);
+        resume.setFileName(fileName);
+        resume.setResumeText(resumeText);
+        resume.setStorageKey(storageKey);
+        resume.setFileData(null);
+        try {
+            resumeRepository.saveAndFlush(resume);
+        } catch (RuntimeException exception) {
+            removeUncommittedFile(storageKey, exception);
+            throw exception;
+        }
+        if (previousStorageKey != null && !previousStorageKey.equals(storageKey)) {
+            removeFileAfterCommit(previousStorageKey);
+        }
+        return getAccessForUser(user);
     }
 
     @Transactional
     public void deleteResume(String authorization) {
         User user = authenticatedUser(authorization);
-        resumeRepository.findByUserId(user.getId()).ifPresent(resumeRepository::delete);
+        resumeRepository.findByUserId(user.getId()).ifPresent(resume -> {
+            resumeRepository.delete(resume);
+            if (resume.getStorageKey() != null) {
+                removeFileAfterCommit(resume.getStorageKey());
+            }
+        });
+    }
+
+    @Transactional
+    public ResumeFileContent userResume(String authorization) {
+        User user = authenticatedUser(authorization);
+        InterviewResume resume = resumeRepository.findByUserId(user.getId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Resume not found."));
+        return readResume(resume);
+    }
+
+    @Transactional
+    public List<InterviewAdminResumeResponse> adminResumes(String authorization) {
+        requireAdmin(authorization);
+        return resumeRepository.findAllByOrderByUploadedAtDesc().stream()
+                .map(resume -> new InterviewAdminResumeResponse(
+                        resume.getUser().getId(),
+                        resume.getUser().getName(),
+                        resume.getUser().getEmail(),
+                        resume.getFileName(),
+                        resume.getUploadedAt()
+                ))
+                .toList();
+    }
+
+    @Transactional
+    public ResumeFileContent adminResume(String authorization, Long userId) {
+        requireAdmin(authorization);
+        InterviewResume resume = resumeRepository.findByUserId(userId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Resume not found."));
+        return readResume(resume);
+    }
+
+    private ResumeFileContent readResume(InterviewResume resume) {
+        if (resume.getStorageKey() == null) {
+            if (resume.getFileData() != null) {
+                return new ResumeFileContent(resume.getFileName(), resume.getFileData());
+            }
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Resume file is unavailable.");
+        }
+        try {
+            return new ResumeFileContent(
+                    resume.getFileName(),
+                    resumeFileStorage.read(resume.getStorageKey())
+            );
+        } catch (NoSuchFileException exception) {
+            throw new ResponseStatusException(
+                    HttpStatus.INTERNAL_SERVER_ERROR,
+                    "The resume file is missing from persistent storage."
+            );
+        } catch (IOException exception) {
+            throw new ResponseStatusException(
+                    HttpStatus.INTERNAL_SERVER_ERROR,
+                    "The resume file could not be read from persistent storage."
+            );
+        }
+    }
+
+    private void removeUncommittedFile(String storageKey, RuntimeException originalException) {
+        try {
+            resumeFileStorage.delete(storageKey);
+        } catch (IOException cleanupException) {
+            originalException.addSuppressed(cleanupException);
+            LOGGER.error("Could not remove an uncommitted resume file {}", storageKey, cleanupException);
+        }
+    }
+
+    private void removeFileIfTransactionRollsBack(String storageKey) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCompletion(int status) {
+                    if (status == STATUS_ROLLED_BACK) {
+                        try {
+                            resumeFileStorage.delete(storageKey);
+                        } catch (IOException exception) {
+                            LOGGER.error("Could not remove rolled-back resume file {}", storageKey, exception);
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    private void removeFileAfterCommit(String storageKey) {
+        Runnable deleteFile = () -> {
+            try {
+                resumeFileStorage.delete(storageKey);
+            } catch (IOException exception) {
+                LOGGER.error("Could not remove replaced or deleted resume file {}", storageKey, exception);
+            }
+        };
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    deleteFile.run();
+                }
+            });
+        } else {
+            deleteFile.run();
+        }
     }
 
     @Transactional

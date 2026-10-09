@@ -426,6 +426,44 @@
     background: #fff3f3;
 }
 
+.interview-resume-saved button[aria-label="View saved resume"],
+.interview-resume-saved button[aria-label="Download saved resume"] {
+    color: #3b55b1;
+    background: #f1f4ff;
+}
+
+.interview-admin-resume {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px 14px;
+    padding: 12px 0;
+    border-top: 1px solid #edf0f5;
+}
+
+.interview-admin-resume > div:first-child {
+    display: grid;
+    gap: 5px;
+    min-width: 0;
+    font-size: 11px;
+    overflow-wrap: anywhere;
+}
+
+.interview-admin-resume > div:first-child > span {
+    color: #5f6e84;
+}
+
+.interview-admin-resume-actions {
+    display: flex;
+    gap: 7px;
+}
+
+.interview-admin-resume-actions .interview-secondary-button {
+    min-height: 32px;
+    padding: 0 10px;
+    font-size: 10px;
+}
+
 .interview-privacy-note {
     display: flex;
     align-items: flex-start;
@@ -1435,6 +1473,10 @@
     }
 
     .interview-admin-payment {
+        grid-template-columns: 1fr;
+    }
+
+    .interview-admin-resume {
         grid-template-columns: 1fr;
     }
 

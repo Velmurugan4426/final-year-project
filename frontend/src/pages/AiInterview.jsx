@@ -6,6 +6,7 @@ import {
     Check,
     CheckCircle2,
     Clock3,
+    Download,
     FileText,
     LockKeyhole,
     LoaderCircle,
@@ -60,6 +61,31 @@ async function interviewRequest(path, options = {}) {
 
     if (response.status === 204) return null;
     return response.json();
+}
+
+async function interviewResumeBlob(path) {
+    const token = localStorage.getItem("token");
+    if (!token) throw new Error("Please sign in to access this resume.");
+
+    let response;
+    try {
+        response = await fetch(`${API_BASE}${path}`, {
+            headers: { Authorization: `Bearer ${token}` }
+        });
+    } catch {
+        throw new Error("Could not connect to the interview service. Please check your connection.");
+    }
+    if (!response.ok) {
+        let message = `Request failed (${response.status}).`;
+        try {
+            const data = await response.json();
+            message = data.message || data.error || message;
+        } catch {
+            // The server did not return a JSON error body.
+        }
+        throw new Error(message);
+    }
+    return response.blob();
 }
 
 function formatDate(value) {
@@ -135,6 +161,7 @@ export default function AiInterview() {
     const [upiPaymentUri, setUpiPaymentUri] = useState("");
     const [paymentUtr, setPaymentUtr] = useState("");
     const [adminPayments, setAdminPayments] = useState([]);
+    const [adminResumes, setAdminResumes] = useState([]);
     const [userResults, setUserResults] = useState([]);
     const [selectedUserId, setSelectedUserId] = useState("");
     const [searchQuery, setSearchQuery] = useState("");
@@ -337,12 +364,14 @@ export default function AiInterview() {
                 setRemainingSeconds(resumableSession.remainingSeconds);
             }
             if (accessResult.isAdmin) {
-                const [reportResult, paymentRequests] = await Promise.all([
+                const [reportResult, paymentRequests, resumeList] = await Promise.all([
                     interviewRequest("/api/ai-interview/admin/reports"),
-                    interviewRequest("/api/ai-interview/admin/manual-payments")
+                    interviewRequest("/api/ai-interview/admin/manual-payments"),
+                    interviewRequest("/api/ai-interview/admin/resumes")
                 ]);
                 setReports(reportResult);
                 setAdminPayments(paymentRequests);
+                setAdminResumes(resumeList);
             }
         } catch (error) {
             setAlert(error.message);
@@ -881,6 +910,9 @@ export default function AiInterview() {
             });
             setAccess(result);
             setResumeFile(null);
+            if (result.isAdmin) {
+                setAdminResumes(await interviewRequest("/api/ai-interview/admin/resumes"));
+            }
             setAlert("Resume uploaded successfully.");
         } catch (error) {
             setAlert(error.message);
@@ -896,8 +928,43 @@ export default function AiInterview() {
             await interviewRequest("/api/ai-interview/resume", { method: "DELETE" });
             const refreshedAccess = await interviewRequest("/api/ai-interview/access");
             setAccess(refreshedAccess);
+            if (refreshedAccess.isAdmin) {
+                setAdminResumes(await interviewRequest("/api/ai-interview/admin/resumes"));
+            }
             setAlert("Resume removed.");
         } catch (error) {
+            setAlert(error.message);
+        } finally {
+            setBusy(false);
+        }
+    }, []);
+
+    const accessResumeFile = useCallback(async (path, fileName, download) => {
+        const previewWindow = download ? null : window.open("about:blank", "_blank");
+        if (!download && !previewWindow) {
+            setAlert("Allow pop-ups for this site to view the resume.");
+            return;
+        }
+        if (previewWindow) previewWindow.opener = null;
+        setBusy(true);
+        setAlert("");
+        try {
+            const blob = await interviewResumeBlob(path);
+            const fileUrl = URL.createObjectURL(blob);
+            if (download) {
+                const link = document.createElement("a");
+                link.href = fileUrl;
+                link.download = fileName;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                window.setTimeout(() => URL.revokeObjectURL(fileUrl), 60_000);
+            } else {
+                previewWindow.location.href = fileUrl;
+                window.setTimeout(() => URL.revokeObjectURL(fileUrl), 60_000);
+            }
+        } catch (error) {
+            previewWindow?.close();
             setAlert(error.message);
         } finally {
             setBusy(false);
@@ -966,12 +1033,14 @@ export default function AiInterview() {
 
     const loadAdminReports = useCallback(async () => {
         try {
-            const [reportResult, paymentRequests] = await Promise.all([
+            const [reportResult, paymentRequests, resumeList] = await Promise.all([
                 interviewRequest("/api/ai-interview/admin/reports"),
-                interviewRequest("/api/ai-interview/admin/manual-payments")
+                interviewRequest("/api/ai-interview/admin/manual-payments"),
+                interviewRequest("/api/ai-interview/admin/resumes")
             ]);
             setReports(reportResult);
             setAdminPayments(paymentRequests);
+            setAdminResumes(resumeList);
         } catch (error) {
             setAlert(error.message);
         }
@@ -1466,6 +1535,22 @@ export default function AiInterview() {
                             <div className="interview-resume-saved">
                                 <div className="interview-file-icon"><FileText size={18} /></div>
                                 <div><strong>{access.resumeFileName}</strong><span>Uploaded {formatDate(access.resumeUploadedAt)}</span></div>
+                                <button
+                                    type="button"
+                                    aria-label="View saved resume"
+                                    disabled={busy}
+                                    onClick={() => accessResumeFile("/api/ai-interview/resume/view", access.resumeFileName, false)}
+                                >
+                                    <FileText size={15} />
+                                </button>
+                                <button
+                                    type="button"
+                                    aria-label="Download saved resume"
+                                    disabled={busy}
+                                    onClick={() => accessResumeFile("/api/ai-interview/resume/download", access.resumeFileName, true)}
+                                >
+                                    <Download size={15} />
+                                </button>
                                 <button type="button" aria-label="Delete saved resume" disabled={busy} onClick={deleteResume}>
                                     <Trash2 size={15} />
                                 </button>
@@ -1890,6 +1975,44 @@ export default function AiInterview() {
                                     </small>
                                 </article>
                             )) : <p className="interview-empty-inline">No payments are waiting for review.</p>}
+                            <div className="interview-panel-heading interview-admin-payment-heading">
+                                <div><span className="interview-eyebrow">PRIVATE DOCUMENTS</span><h2>User resumes</h2></div>
+                                <button className="interview-secondary-button" type="button" disabled={busy} onClick={loadAdminReports}>Refresh</button>
+                            </div>
+                            {adminResumes.length ? adminResumes.map((resume) => (
+                                <article className="interview-admin-resume" key={resume.userId}>
+                                    <div>
+                                        <strong>{resume.userName} · {resume.userEmail}</strong>
+                                        <span>{resume.fileName} · Uploaded {formatDate(resume.uploadedAt)}</span>
+                                    </div>
+                                    <div className="interview-admin-resume-actions">
+                                        <button
+                                            className="interview-secondary-button"
+                                            type="button"
+                                            disabled={busy}
+                                            onClick={() => accessResumeFile(
+                                                `/api/ai-interview/admin/resumes/${resume.userId}/view`,
+                                                resume.fileName,
+                                                false
+                                            )}
+                                        >
+                                            <FileText size={14} /> View
+                                        </button>
+                                        <button
+                                            className="interview-secondary-button"
+                                            type="button"
+                                            disabled={busy}
+                                            onClick={() => accessResumeFile(
+                                                `/api/ai-interview/admin/resumes/${resume.userId}/download`,
+                                                resume.fileName,
+                                                true
+                                            )}
+                                        >
+                                            <Download size={14} /> Download
+                                        </button>
+                                    </div>
+                                </article>
+                            )) : <p className="interview-empty-inline">No resumes have been uploaded.</p>}
                             <div className="interview-panel-heading">
                                 <h2>Monitoring events</h2>
                                 <button className="interview-secondary-button" type="button" onClick={loadAdminReports}>Refresh</button>

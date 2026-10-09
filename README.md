@@ -63,8 +63,23 @@ history and approve it before one day of access is granted. Submitting a UTR
 or a screenshot alone never grants access. Pending payments can be approved or
 rejected from the AI Interview administration panel.
 
-Resumes (PDF, max 5 MB), original file bytes, and extracted text are stored in
-PostgreSQL and can be removed by the account owner. Completed interview
+Resumes (PDF, max 5 MB) and extracted text are stored in PostgreSQL; new
+original PDF files are stored on the backend's configured file-storage
+directory. Account owners can view, download, replace, or remove their own
+resumes. The configured AI Interview administrator can view and download all
+uploaded resumes from the administration panel. Existing resumes stored as
+PostgreSQL bytea remain readable after deployment.
+
+For Render, attach a persistent disk to the backend service with mount path
+`/var/data` and set the backend environment variable
+`RESUME_STORAGE_PATH=/var/data/resumes`. Keep `DB_URL`, `DB_USERNAME`, and
+`DB_PASSWORD` configured for Neon PostgreSQL. Without a mounted persistent
+disk, the backend's local filesystem is ephemeral and uploaded files will not
+survive a redeploy or instance replacement. On startup, the backend adds the
+resume storage metadata column and updates the legacy file column to allow
+new file-backed records; no manual Neon SQL change is required.
+
+Completed interview
 feedback provides a topic-by-topic knowledge review with a rating, evidence
 from the candidate's own answers, and actionable next steps. It only assesses
 topics covered by the transcript. Camera/microphone access is requested only

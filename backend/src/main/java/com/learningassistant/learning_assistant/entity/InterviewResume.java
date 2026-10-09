@@ -23,7 +23,10 @@ public class InterviewResume {
     @Column(name = "resume_text", nullable = false, columnDefinition = "text")
     private String resumeText;
 
-    @Column(name = "file_data", nullable = false, columnDefinition = "bytea")
+    @Column(name = "storage_key", length = 80)
+    private String storageKey;
+
+    @Column(name = "file_data", columnDefinition = "bytea")
     private byte[] fileData;
 
     @Column(name = "uploaded_at", nullable = false)
@@ -41,6 +44,8 @@ public class InterviewResume {
     public void setFileName(String fileName) { this.fileName = fileName; }
     public String getResumeText() { return resumeText; }
     public void setResumeText(String resumeText) { this.resumeText = resumeText; }
+    public String getStorageKey() { return storageKey; }
+    public void setStorageKey(String storageKey) { this.storageKey = storageKey; }
     public byte[] getFileData() { return fileData; }
     public void setFileData(byte[] fileData) { this.fileData = fileData; }
     public LocalDateTime getUploadedAt() { return uploadedAt; }

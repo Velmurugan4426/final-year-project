@@ -14,7 +14,13 @@ import com.learningassistant.learning_assistant.repository.InterviewSessionRepos
 import com.learningassistant.learning_assistant.repository.UserRepository;
 import com.learningassistant.learning_assistant.security.JwtService;
 import com.learningassistant.learning_assistant.service.InterviewService;
+import com.learningassistant.learning_assistant.service.ResumeFileStorage;
 import com.learningassistant.learning_assistant.service.TutorModelService;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDPageContentStream;
+import org.apache.pdfbox.pdmodel.font.PDType1Font;
+import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -23,6 +29,8 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.util.UUID;
 import java.time.Duration;
 
@@ -78,6 +86,9 @@ class InterviewProctoringIntegrationTests {
     @MockitoBean
     private TutorModelService tutorModelService;
 
+    @MockitoBean
+    private ResumeFileStorage resumeFileStorage;
+
     @Test
     void serverEnforcesViolationLimitsAndKeepsEventsVisibleInAdminReports() {
         User user = userRepository.save(new User(
@@ -115,6 +126,87 @@ class InterviewProctoringIntegrationTests {
                 outOfFrameResult.terminationReason()
         );
         assertAnswerRejected(authorization, outOfFrameSession.getId());
+    }
+
+    @Test
+    void resumesAreAvailableToTheirOwnerAndConfiguredAdministratorOnly() throws IOException {
+        User owner = userRepository.save(new User(
+                "Resume owner",
+                "resume-owner-" + UUID.randomUUID() + "@example.com",
+                "test-password"
+        ));
+        User otherUser = userRepository.save(new User(
+                "Other learner",
+                "resume-other-" + UUID.randomUUID() + "@example.com",
+                "test-password"
+        ));
+        User admin = userRepository.findByEmail("proctor-admin@example.com")
+                .orElseGet(() -> userRepository.save(new User(
+                        "Interview administrator",
+                        "proctor-admin@example.com",
+                        "test-password"
+                )));
+        String ownerAuthorization = "Bearer " + jwtService.generateToken(owner.getEmail());
+        String otherAuthorization = "Bearer " + jwtService.generateToken(otherUser.getEmail());
+        String adminAuthorization = "Bearer " + jwtService.generateToken(admin.getEmail());
+        byte[] pdf = createResumePdf();
+        String storageKey = UUID.randomUUID() + ".pdf";
+        when(resumeFileStorage.store(any(byte[].class))).thenReturn(storageKey);
+        when(resumeFileStorage.read(storageKey)).thenReturn(pdf);
+
+        interviewService.uploadResume(
+                ownerAuthorization,
+                new MockMultipartFile("file", "owner-resume.pdf", "application/pdf", pdf)
+        );
+
+        InterviewResume savedResume = resumeRepository.findByUserId(owner.getId()).orElseThrow();
+        assertEquals(storageKey, savedResume.getStorageKey());
+        assertArrayEquals(pdf, interviewService.userResume(ownerAuthorization).contents());
+
+        ResponseStatusException ownerIsolation = assertThrows(
+                ResponseStatusException.class,
+                () -> interviewService.userResume(otherAuthorization)
+        );
+        assertEquals(HttpStatus.NOT_FOUND, ownerIsolation.getStatusCode());
+
+        ResponseStatusException adminOnlyList = assertThrows(
+                ResponseStatusException.class,
+                () -> interviewService.adminResumes(ownerAuthorization)
+        );
+        assertEquals(HttpStatus.FORBIDDEN, adminOnlyList.getStatusCode());
+        ResponseStatusException adminOnlyDownload = assertThrows(
+                ResponseStatusException.class,
+                () -> interviewService.adminResume(ownerAuthorization, owner.getId())
+        );
+        assertEquals(HttpStatus.FORBIDDEN, adminOnlyDownload.getStatusCode());
+
+        assertTrue(interviewService.adminResumes(adminAuthorization).stream()
+                .anyMatch(resume -> resume.userId().equals(owner.getId())));
+        assertArrayEquals(
+                pdf,
+                interviewService.adminResume(adminAuthorization, owner.getId()).contents()
+        );
+
+        interviewService.deleteResume(ownerAuthorization);
+        assertTrue(resumeRepository.findByUserId(owner.getId()).isEmpty());
+        verify(resumeFileStorage).delete(storageKey);
+    }
+
+    private byte[] createResumePdf() throws IOException {
+        try (PDDocument document = new PDDocument();
+             ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            PDPage page = new PDPage();
+            document.addPage(page);
+            try (PDPageContentStream content = new PDPageContentStream(document, page)) {
+                content.beginText();
+                content.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA), 12);
+                content.newLineAtOffset(50, 700);
+                content.showText("Resume candidate experience");
+                content.endText();
+            }
+            document.save(output);
+            return output.toByteArray();
+        }
     }
 
     private void assertThreshold(String authorization, User user, String eventType, int limit) {

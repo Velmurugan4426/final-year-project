@@ -3,11 +3,15 @@ package com.learningassistant.learning_assistant.controller;
 import com.learningassistant.learning_assistant.dto.*;
 import com.learningassistant.learning_assistant.service.InterviewService;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
+import java.nio.charset.StandardCharsets;
 
 @RestController
 @RequestMapping("/api/ai-interview")
@@ -40,6 +44,20 @@ public class InterviewController {
             @RequestHeader(value = "Authorization", required = false) String authorization
     ) {
         interviewService.deleteResume(authorization);
+    }
+
+    @GetMapping("/resume/view")
+    public ResponseEntity<byte[]> viewResume(
+            @RequestHeader(value = "Authorization", required = false) String authorization
+    ) {
+        return resumeResponse(interviewService.userResume(authorization), false);
+    }
+
+    @GetMapping("/resume/download")
+    public ResponseEntity<byte[]> downloadResume(
+            @RequestHeader(value = "Authorization", required = false) String authorization
+    ) {
+        return resumeResponse(interviewService.userResume(authorization), true);
     }
 
     @PostMapping("/orders")
@@ -180,6 +198,29 @@ public class InterviewController {
         return interviewService.pendingManualPayments(authorization);
     }
 
+    @GetMapping("/admin/resumes")
+    public List<InterviewAdminResumeResponse> adminResumes(
+            @RequestHeader(value = "Authorization", required = false) String authorization
+    ) {
+        return interviewService.adminResumes(authorization);
+    }
+
+    @GetMapping("/admin/resumes/{userId}/view")
+    public ResponseEntity<byte[]> viewAdminResume(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @PathVariable Long userId
+    ) {
+        return resumeResponse(interviewService.adminResume(authorization, userId), false);
+    }
+
+    @GetMapping("/admin/resumes/{userId}/download")
+    public ResponseEntity<byte[]> downloadAdminResume(
+            @RequestHeader(value = "Authorization", required = false) String authorization,
+            @PathVariable Long userId
+    ) {
+        return resumeResponse(interviewService.adminResume(authorization, userId), true);
+    }
+
     @PostMapping("/admin/manual-payments/{paymentId}/approve")
     public InterviewAdminManualPaymentResponse approveManualPayment(
             @RequestHeader(value = "Authorization", required = false) String authorization,
@@ -194,5 +235,18 @@ public class InterviewController {
             @PathVariable Long paymentId
     ) {
         return interviewService.rejectManualPayment(authorization, paymentId);
+    }
+
+    private ResponseEntity<byte[]> resumeResponse(ResumeFileContent resume, boolean attachment) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_PDF);
+        headers.setContentDisposition((attachment
+                ? ContentDisposition.attachment()
+                : ContentDisposition.inline())
+                .filename(resume.fileName(), StandardCharsets.UTF_8)
+                .build());
+        headers.setCacheControl("private, no-store");
+        headers.set("X-Content-Type-Options", "nosniff");
+        return ResponseEntity.ok().headers(headers).body(resume.contents());
     }
 }

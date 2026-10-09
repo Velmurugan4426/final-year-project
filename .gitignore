@@ -16,6 +16,7 @@ frontend/.vite/
 # Backend - Spring Boot / Maven
 # ==============================
 backend/target/
+backend/uploads/
 
 # ==============================
 # IDE
