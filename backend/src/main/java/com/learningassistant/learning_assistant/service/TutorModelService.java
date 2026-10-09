@@ -884,7 +884,7 @@ public class TutorModelService {
 
                     .newBuilder(uri)
 
-                    .timeout(Duration.ofSeconds(45))
+                    .timeout(Duration.ofSeconds(30))
 
                     .header(
                             "Content-Type",

@@ -196,6 +196,8 @@ export default function AiInterview() {
 
     const videoRef = useRef(null);
     const streamRef = useRef(null);
+    const timerDeadlineRef = useRef(0);
+    const answerSubmittingRef = useRef(false);
     const recognitionRef = useRef(null);
     const mediaRecorderRef = useRef(null);
     const audioChunksRef = useRef([]);
@@ -340,7 +342,11 @@ export default function AiInterview() {
             }
             return updatedSession;
         });
-        setRemainingSeconds(updatedSession.remainingSeconds || 0);
+        const remaining = updatedSession.remainingSeconds || 0;
+        timerDeadlineRef.current = isInterviewActive(updatedSession.status)
+            ? Date.now() + remaining * 1000
+            : 0;
+        setRemainingSeconds(remaining);
         updateHistory(updatedSession);
 
         if (!isInterviewActive(updatedSession.status)) {
@@ -367,6 +373,7 @@ export default function AiInterview() {
             const resumableSession = sessionResult.find((item) => isInterviewActive(item.status));
             if (resumableSession) {
                 setSession(resumableSession);
+                timerDeadlineRef.current = Date.now() + (resumableSession.remainingSeconds || 0) * 1000;
                 setRemainingSeconds(resumableSession.remainingSeconds);
             }
             if (accessResult.isAdmin) {
@@ -486,8 +493,11 @@ export default function AiInterview() {
     }, [currentQuestion, sessionId, sessionStatus, speakQuestion]);
 
     useEffect(() => {
-        setRemainingSeconds(session?.remainingSeconds || 0);
-    }, [session?.id, session?.remainingSeconds]);
+        if (!sessionId || !isInterviewActive(sessionStatus)) {
+            timerDeadlineRef.current = 0;
+            setRemainingSeconds(0);
+        }
+    }, [sessionId, sessionStatus]);
 
     useEffect(() => {
         if (!sessionId || !isInterviewActive(sessionStatus)) return undefined;
@@ -517,12 +527,12 @@ export default function AiInterview() {
     }, [applySessionResponse, sessionId, sessionStatus]);
 
     useEffect(() => {
-        if (!sessionId || !isInterviewActive(sessionStatus) || !session?.expiresAt) return undefined;
+        if (!sessionId || !isInterviewActive(sessionStatus)) return undefined;
 
         let expiryCheckStarted = false;
         const updateClock = () => {
-            const seconds = Math.max(0, Math.ceil((new Date(session.expiresAt).getTime() - Date.now()) / 1000));
-            setRemainingSeconds(seconds);
+            const seconds = Math.max(0, Math.ceil((timerDeadlineRef.current - Date.now()) / 1000));
+            setRemainingSeconds((current) => current === seconds ? current : seconds);
             if (seconds === 0 && !expiryCheckStarted) {
                 expiryCheckStarted = true;
                 setAlert("The interview time has ended. Confirming the session status with the server.");
@@ -534,7 +544,7 @@ export default function AiInterview() {
         updateClock();
         const interval = window.setInterval(updateClock, 1000);
         return () => window.clearInterval(interval);
-    }, [applySessionResponse, session?.expiresAt, sessionId, sessionStatus]);
+    }, [applySessionResponse, sessionId, sessionStatus]);
 
     useEffect(() => {
         const onOnline = () => setConnectionStatus("Connected");
@@ -741,7 +751,7 @@ export default function AiInterview() {
                     } finally {
                         detectionPendingRef.current = false;
                     }
-                }, 1500);
+                }, 3000);
             } catch (error) {
                 if (!cancelled) {
                     setAlert(`Phone detection could not be started: ${error.message}`);
@@ -827,7 +837,9 @@ export default function AiInterview() {
             });
             setSession(result);
             updateHistory(result);
-            setRemainingSeconds(result.remainingSeconds || 0);
+            const remaining = result.remainingSeconds || 0;
+            timerDeadlineRef.current = Date.now() + remaining * 1000;
+            setRemainingSeconds(remaining);
             terminationHandledRef.current = false;
             activeMonitoringRef.current = true;
             await requestFullscreen();
@@ -862,41 +874,43 @@ export default function AiInterview() {
 
     const submitAnswer = useCallback(async (event) => {
         event.preventDefault();
-        if (!session || !isInterviewActive(session.status) || remainingSeconds <= 0 || !answerRef.current.trim()) return;
+        if (answerSubmittingRef.current || busy || !session
+                || !isInterviewActive(session.status) || remainingSeconds <= 0
+                || !answerRef.current.trim()) return;
+        answerSubmittingRef.current = true;
         setBusy(true);
         setAlert("");
-        voiceCaptureActiveRef.current = false;
-        window.clearTimeout(voiceRestartTimeoutRef.current);
-        const activeRecognition = recognitionRef.current;
-        if (activeRecognition) {
-            const recognitionStopped = new Promise((resolve) => {
-                voiceStopResolveRef.current = resolve;
-                voiceStopTimeoutRef.current = window.setTimeout(() => {
+        try {
+            voiceCaptureActiveRef.current = false;
+            window.clearTimeout(voiceRestartTimeoutRef.current);
+            const activeRecognition = recognitionRef.current;
+            if (activeRecognition) {
+                const recognitionStopped = new Promise((resolve) => {
+                    voiceStopResolveRef.current = resolve;
+                    voiceStopTimeoutRef.current = window.setTimeout(() => {
+                        voiceStopResolveRef.current?.();
+                        voiceStopResolveRef.current = null;
+                        voiceStopTimeoutRef.current = null;
+                    }, 800);
+                });
+                try {
+                    activeRecognition.stop();
+                } catch (error) {
+                    window.clearTimeout(voiceStopTimeoutRef.current);
+                    voiceStopTimeoutRef.current = null;
                     voiceStopResolveRef.current?.();
                     voiceStopResolveRef.current = null;
-                    voiceStopTimeoutRef.current = null;
-                }, 800);
-            });
-            try {
-                activeRecognition.stop();
-            } catch (error) {
-                window.clearTimeout(voiceStopTimeoutRef.current);
-                voiceStopTimeoutRef.current = null;
-                voiceStopResolveRef.current?.();
-                voiceStopResolveRef.current = null;
-                setAlert(`Voice input could not stop cleanly: ${error.message}`);
+                    setAlert(`Voice input could not stop cleanly: ${error.message}`);
+                }
+                await recognitionStopped;
             }
-            await recognitionStopped;
-        }
-        recognitionRef.current = null;
-        setRecordingVoice(false);
-        const spokenAnswer = answerRef.current.trim();
-        if (!spokenAnswer) {
-            setBusy(false);
-            setAlert("No speech was recognized. Select Answer by voice and try again.");
-            return;
-        }
-        try {
+            recognitionRef.current = null;
+            setRecordingVoice(false);
+            const spokenAnswer = answerRef.current.trim();
+            if (!spokenAnswer) {
+                setAlert("No speech was recognized. Select Answer by voice and try again.");
+                return;
+            }
             const result = await interviewRequest(`/api/ai-interview/sessions/${session.id}/answers`, {
                 method: "POST",
                 timeoutMs: 120_000,
@@ -908,9 +922,10 @@ export default function AiInterview() {
         } catch (error) {
             setAlert(error.message);
         } finally {
+            answerSubmittingRef.current = false;
             setBusy(false);
         }
-    }, [applySessionResponse, remainingSeconds, session]);
+    }, [applySessionResponse, busy, remainingSeconds, session]);
 
     const uploadResume = useCallback(async () => {
         if (!resumeFile) {
@@ -1041,7 +1056,11 @@ export default function AiInterview() {
             return;
         }
         terminationHandledRef.current = !isInterviewActive(selectedSession.status);
-        setRemainingSeconds(selectedSession.remainingSeconds || 0);
+        const remaining = selectedSession.remainingSeconds || 0;
+        timerDeadlineRef.current = isInterviewActive(selectedSession.status)
+            ? Date.now() + remaining * 1000
+            : 0;
+        setRemainingSeconds(remaining);
         setMonitoringMessage("");
         answerRef.current = "";
         setAnswer("");

@@ -44,6 +44,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.times;
 
 @SpringBootTest(properties = {
         "spring.datasource.url=jdbc:h2:mem:interview-proctoring-tests;DB_CLOSE_DELAY=-1",
@@ -313,7 +314,7 @@ class InterviewProctoringIntegrationTests {
     }
 
     @Test
-    void selectedModeAndDifficultyDriveDynamicAiTurnsAndCompletion() {
+    void selectedModeAndDifficultyDriveDynamicAiTurnsAndCompletion() throws InterruptedException {
         User user = userRepository.save(new User(
                 "Dynamic interview learner",
                 "dynamic-" + UUID.randomUUID() + "@example.com",
@@ -359,12 +360,17 @@ class InterviewProctoringIntegrationTests {
                   "nextSteps": ["Practice system design scenarios."]
                 }
                 """;
+        String completion = """
+                {"decision":"COMPLETE","difficulty":"ADVANCED","question":"","feedback":%s}
+                """.formatted(feedback);
         when(tutorModelService.generateInterviewReply(anyList(), anyString()))
+                .thenAnswer(invocation -> {
+                    Thread.sleep(2_000);
+                    return "{\"decision\":\"CONTINUE\",\"difficulty\":\"BEGINNER\",\"question\":\"Describe how you would structure a Java service.\"}";
+                })
                 .thenReturn(
-                        "{\"decision\":\"CONTINUE\",\"difficulty\":\"BEGINNER\",\"question\":\"Describe how you would structure a Java service.\"}",
                         "{\"decision\":\"CONTINUE\",\"difficulty\":\"ADVANCED\",\"question\":\"How would you scale this service under heavy load?\"}",
-                        "{\"decision\":\"COMPLETE\",\"difficulty\":\"ADVANCED\",\"question\":\"\"}",
-                        feedback
+                        completion
                 );
 
         var started = interviewService.startSession(
@@ -375,6 +381,7 @@ class InterviewProctoringIntegrationTests {
         assertEquals("BEGINNER", started.difficulty());
         assertEquals("IN_PROGRESS", started.status());
         assertTrue(started.expiresAt().isAfter(started.startedAt()));
+        assertTrue(started.remainingSeconds() >= 299, "AI opening-question latency must not reduce interview time");
 
         var continued = interviewService.answer(
                 authorization,
@@ -396,6 +403,7 @@ class InterviewProctoringIntegrationTests {
         assertTrue(completed.feedback().contains("NEEDS_IMPROVEMENT"));
         assertTrue(completed.feedback().contains("Practice system design scenarios."));
         assertEquals(2, completed.transcript().size());
+        verify(tutorModelService, times(3)).generateInterviewReply(anyList(), anyString());
     }
 
     @Test
